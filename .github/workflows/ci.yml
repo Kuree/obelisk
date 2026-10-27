@@ -212,6 +212,7 @@ jobs:
         with:
           name: ci-timings-${{ matrix.ccache }}
           path: |
+            build/CMakeFiles/CMakeConfigureLog.yaml
             build/test/lit-results.json
             build/test/lit-trace.json
             build/.ninja_log

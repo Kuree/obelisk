@@ -387,6 +387,7 @@ option(TALOS_USE_SDK_LLD
 # The macOS SDK ships its libraries as ThinLTO bitcode, which only its own LLD
 # can link. Select it before LLVM's options detect the linker, and share one
 # ThinLTO cache across the host executables.
+set(_talos_use_macos_sdk_lld FALSE)
 if(APPLE AND TALOS_USE_SDK_LLD AND NOT LLVM_USE_LINKER AND
    EXISTS "${TALOS_LLVM_TOOLS_DIR}/ld64.lld")
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -394,18 +395,7 @@ if(APPLE AND TALOS_USE_SDK_LLD AND NOT LLVM_USE_LINKER AND
   else()
     set(LLVM_USE_LINKER "${TALOS_LLVM_TOOLS_DIR}/ld64.lld")
   endif()
-  set(TALOS_HOST_LTO_CACHE_DIR "${CMAKE_BINARY_DIR}/lto.cache" CACHE PATH
-    "ThinLTO cache for host links of the macOS SDK's bitcode libraries")
-  set(TALOS_HOST_LTO_CACHE_POLICY "" CACHE STRING
-    "Optional pruning policy for the host ThinLTO cache")
-  foreach(flags CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS
-                CMAKE_MODULE_LINKER_FLAGS)
-    string(APPEND ${flags} " -Wl,-cache_path_lto,${TALOS_HOST_LTO_CACHE_DIR}")
-    if(TALOS_HOST_LTO_CACHE_POLICY)
-      string(APPEND ${flags}
-        " -Wl,--thinlto-cache-policy=${TALOS_HOST_LTO_CACHE_POLICY}")
-    endif()
-  endforeach()
+  set(_talos_use_macos_sdk_lld TRUE)
   message(STATUS "Host linker: ${TALOS_LLVM_TOOLS_DIR}/ld64.lld")
 endif()
 # Upstream Clang would otherwise use the SDK's bundled libc++ headers.
@@ -418,6 +408,26 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
+
+# HandleLLVMOptions first probes the compiler's standard library, then applies
+# -fuse-ld. Keep LLD-only cache flags out of those initial probes, which still
+# use Apple's default linker and otherwise report a misleading library error.
+if(_talos_use_macos_sdk_lld)
+  set(TALOS_HOST_LTO_CACHE_DIR "${CMAKE_BINARY_DIR}/lto.cache" CACHE PATH
+    "ThinLTO cache for host links of the macOS SDK's bitcode libraries")
+  set(TALOS_HOST_LTO_CACHE_POLICY "" CACHE STRING
+    "Optional pruning policy for the host ThinLTO cache")
+  foreach(flags CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS
+                CMAKE_MODULE_LINKER_FLAGS)
+    string(APPEND ${flags} " -Wl,-cache_path_lto,${TALOS_HOST_LTO_CACHE_DIR}")
+    if(TALOS_HOST_LTO_CACHE_POLICY)
+      string(APPEND ${flags}
+        " -Wl,--thinlto-cache-policy=${TALOS_HOST_LTO_CACHE_POLICY}")
+    endif()
+  endforeach()
+endif()
+unset(_talos_use_macos_sdk_lld)
+
 if(WIN32 AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC" AND NOT MSVC)
   # LLVM 22's add_link_opts assumes non-MSVC compiler drivers use ELF. The
   # SDK's clang++ has GNU command-line syntax but targets the MSVC COFF ABI.
