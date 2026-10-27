@@ -1,6 +1,7 @@
 add_library(ObeliskLLVMPassPlugin MODULE
   PassPlugin.cpp
   ../ClockedGuardLayout.cpp
+  ../WideIntegerVectorization.cpp
 )
 llvm_update_compile_flags(ObeliskLLVMPassPlugin)
 target_include_directories(ObeliskLLVMPassPlugin PRIVATE

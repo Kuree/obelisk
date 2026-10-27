@@ -1,6 +1,7 @@
 //===- ClockedGuardLayout.cpp - Event-guard arms of clocked kernels --------===//
 
 #include "obelisk/LLVM/ClockedGuardLayout.h"
+#include "obelisk/LLVM/WideIntegerVectorization.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -74,6 +75,18 @@ PreservedAnalyses ClockedGuardLayoutPass::run(Module &module,
 }
 
 void registerObeliskLLVMPasses(PassBuilder &builder) {
+  builder.registerVectorizerStartEPCallback(
+      [](FunctionPassManager &passes, OptimizationLevel) {
+        passes.addPass(LimitWideIntegerVectorizationPass());
+      });
+  builder.registerPipelineParsingCallback(
+      [](StringRef name, FunctionPassManager &passes,
+         ArrayRef<PassBuilder::PipelineElement>) {
+        if (name != "obelisk-limit-wide-integer-vectorization")
+          return false;
+        passes.addPass(LimitWideIntegerVectorizationPass());
+        return true;
+      });
   builder.registerPipelineParsingCallback(
       [](StringRef name, ModulePassManager &passes,
          ArrayRef<PassBuilder::PipelineElement>) {

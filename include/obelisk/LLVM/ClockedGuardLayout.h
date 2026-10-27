@@ -1,7 +1,7 @@
 //===- ClockedGuardLayout.h - Event-guard arms of clocked kernels ----------===//
 //
-// LLVM IR passes that run on the generated design after the optimization
-// pipeline. They are linked into the driver and also built as an `opt` plugin
+// LLVM IR passes that run on the generated design during optimization and
+// codegen. They are linked into the driver and also built as an `opt` plugin
 // (ObeliskLLVMPassPlugin) so each pass is tested on LLVM IR directly.
 //
 //===----------------------------------------------------------------------===//
@@ -35,8 +35,8 @@ struct ClockedGuardLayoutPass : llvm::PassInfoMixin<ClockedGuardLayoutPass> {
   static bool runOnFunction(llvm::Function &function);
 };
 
-/// Registers the passes above with a pass builder under their `opt` names
-/// (`obelisk-clocked-guard-layout`).
+/// Registers the LLVM passes under their `opt` names and installs the default
+/// pipeline's wide-integer vectorization guard.
 void registerObeliskLLVMPasses(llvm::PassBuilder &builder);
 
 } // namespace obelisk

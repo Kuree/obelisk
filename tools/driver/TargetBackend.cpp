@@ -31,6 +31,7 @@
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/LLVM/ClockedGuardLayout.h"
+#include "obelisk/LLVM/WideIntegerVectorization.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
@@ -1015,6 +1016,7 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
   builder.registerLoopAnalyses(loopAnalyses);
   builder.crossRegisterProxies(loopAnalyses, functionAnalyses, cgsccAnalyses,
                                moduleAnalyses);
+  registerObeliskLLVMPasses(builder);
   OptimizationLevel level = getLLVMOptLevel(optLevel);
   ModulePassManager passes = optLevel == 0
                                  ? builder.buildO0DefaultPipeline(level)
@@ -1083,6 +1085,10 @@ LogicalResult lowerLLVMCoroutines(llvm::Module &module,
   passes.addPass(
       createModuleToPostOrderCGSCCPassAdaptor(std::move(coroutinePasses)));
   passes.addPass(CoroCleanupPass());
+  // Preserve the wide-shift loop policy when LLD optimizes these LTO modules.
+  if (optimizeFrame)
+    passes.addPass(createModuleToFunctionPassAdaptor(
+        LimitWideIntegerVectorizationPass()));
   passes.run(module, moduleAnalyses);
   if (verifyModule(module, &errs())) {
     errs() << "obelisk: error: invalid LLVM IR after coroutine lowering\n";
