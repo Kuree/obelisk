@@ -52,7 +52,8 @@ foreach(flavor IN ITEMS native lto)
       OUTPUT "${object}"
       COMMAND "${CMAKE_COMMAND}" -E make_directory
         "${_obelisk_windows_runtime_dir}/${flavor}"
-      COMMAND "${OBELISK_LLVM_TOOLS_DIR}/clang++.exe"
+      COMMAND ${CMAKE_CXX_COMPILER_LAUNCHER}
+        "${OBELISK_LLVM_TOOLS_DIR}/clang++.exe"
         --target=${OBELISK_TARGET_TRIPLE} -std=c++17 -O3
         -fms-runtime-lib=dll -ffunction-sections -fdata-sections ${lto_flags}
         ${_obelisk_windows_runtime_definitions}

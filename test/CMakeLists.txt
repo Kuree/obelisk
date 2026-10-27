@@ -537,9 +537,7 @@ if(OBELISK_NATIVE_PLATFORM STREQUAL "linux")
 endif()
 set_target_properties(check-obelisk-lint PROPERTIES FOLDER "Tests")
 
-add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
-  ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS
+set(OBELISK_TEST_DEPENDS
   obelisk
   obelisk-test-driver
   obelisk-filecheck
@@ -554,5 +552,12 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-cov
   ${_obelisk_driver_test_dependencies}
   ${OBELISK_RUNTIME_UNIT_TARGETS}
+)
+add_custom_target(obelisk-test-depends DEPENDS ${OBELISK_TEST_DEPENDS})
+set_target_properties(obelisk-test-depends PROPERTIES FOLDER "Tests")
+
+add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
+  ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS ${OBELISK_TEST_DEPENDS}
 )
 set_target_properties(check-obelisk PROPERTIES FOLDER "Tests")

@@ -142,7 +142,8 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
     OUTPUT "${object}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${_obelisk_target_runtime_dir}"
-    COMMAND "${_obelisk_wasm_cxx}" ${_obelisk_wasm_flags}
+    COMMAND ${CMAKE_CXX_COMPILER_LAUNCHER}
+      "${_obelisk_wasm_cxx}" ${_obelisk_wasm_flags}
       -c "${_obelisk_runtime_source_dir}/lib/${source}.cpp" -o "${object}"
     DEPENDS
       ${source_dependencies}

@@ -391,9 +391,15 @@ if(APPLE AND OBELISK_USE_SDK_LLD AND NOT LLVM_USE_LINKER AND
   endif()
   set(OBELISK_HOST_LTO_CACHE_DIR "${CMAKE_BINARY_DIR}/lto.cache" CACHE PATH
     "ThinLTO cache for host links of the macOS SDK's bitcode libraries")
+  set(OBELISK_HOST_LTO_CACHE_POLICY "" CACHE STRING
+    "Optional pruning policy for the host ThinLTO cache")
   foreach(flags CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS
                 CMAKE_MODULE_LINKER_FLAGS)
     string(APPEND ${flags} " -Wl,-cache_path_lto,${OBELISK_HOST_LTO_CACHE_DIR}")
+    if(OBELISK_HOST_LTO_CACHE_POLICY)
+      string(APPEND ${flags}
+        " -Wl,--thinlto-cache-policy=${OBELISK_HOST_LTO_CACHE_POLICY}")
+    endif()
   endforeach()
   message(STATUS "Host linker: ${OBELISK_LLVM_TOOLS_DIR}/ld64.lld")
 endif()

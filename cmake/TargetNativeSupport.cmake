@@ -210,7 +210,8 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
       OUTPUT "${output}"
       COMMAND "${CMAKE_COMMAND}" -E make_directory
               "${_obelisk_target_runtime_dir}"
-      COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
+      COMMAND ${CMAKE_CXX_COMPILER_LAUNCHER}
+        "${OBELISK_LLVM_DIST_DIR}/bin/clang++"
         --target=${OBELISK_TARGET_TRIPLE}
         -std=c++17 -O3 ${lto_flags} -fPIC -fvisibility=hidden
         ${_obelisk_target_runtime_definitions}

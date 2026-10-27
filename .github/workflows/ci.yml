@@ -16,8 +16,38 @@ permissions:
 env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CMAKE_BUILD_PARALLEL_LEVEL: 4
+  # This SDK image also supplies wasm's ordinary runtime libraries and tools.
+  WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
 
 jobs:
+  # Only project-owned TableGen outputs are needed to start the wasm build.
+  generate-wasm-inputs:
+    name: Generate wasm inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install generator build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+
+      - name: Generate wasm inputs
+        run: |
+          cmake -S . -B build-generated -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOBELISK_INCLUDE_TESTS=OFF \
+            -DOBELISK_ENABLE_Z3=OFF
+          cmake --build build-generated --target obelisk-generated-files
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: obelisk-generated-files
+          path: build-generated/generated
+          if-no-files-found: error
+          retention-days: 1
+
   # Every host is required; a new host stays advisory until green.
   build-and-test:
     name: ${{ matrix.name }}
@@ -114,6 +144,15 @@ jobs:
           key: ccache-${{ matrix.ccache }}-${{ github.sha }}
           restore-keys: ccache-${{ matrix.ccache }}-
 
+      # The macOS LLVM SDK contains bitcode, so ccache cannot reuse its links.
+      - name: Restore host ThinLTO cache
+        if: runner.os == 'macOS'
+        uses: actions/cache/restore@v4
+        with:
+          path: build/lto.cache
+          key: host-lto-${{ matrix.ccache }}-${{ github.sha }}
+          restore-keys: host-lto-${{ matrix.ccache }}-
+
       - name: Prepare compiler cache
         run: |
           ccache --max-size=2G
@@ -135,58 +174,80 @@ jobs:
             host_args=(
               "-Dzstd_ROOT=$(brew --prefix zstd)"
               -DCMAKE_OSX_ARCHITECTURES=arm64
-              -DLLVM_PARALLEL_LINK_JOBS=1)
+              -DLLVM_PARALLEL_LINK_JOBS=1
+              -DOBELISK_HOST_LTO_CACHE_POLICY=cache_size_bytes=2147483648:prune_interval=0s)
           fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             "${host_args[@]}" \
             -DOBELISK_ENABLE_PCH=ON \
-            "-DLLVM_LIT_ARGS=-sv;-j${{ matrix.lit_jobs || 12 }}" \
+            "-DLLVM_LIT_ARGS=-sv;-j${{ matrix.lit_jobs || 4 }};--time-tests;--output=lit-results.json;--time-trace-output=lit-trace.json" \
             -DOBELISK_INCLUDE_TESTS=ON \
             -DOBELISK_ENABLE_REAL_UVM_TESTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build
+        id: build
+        # Compile excluded test helpers here so the test step only runs tests.
+        run: cmake --build build --target all obelisk-test-depends
 
-      # Publish architecture-independent wasm inputs once, from Linux x86-64.
-      - name: Upload generated files
-        if: runner.os == 'Linux' && runner.arch == 'X64'
+      - name: Run lit regression suite
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            nproc
+            free -h
+            /usr/bin/time -v cmake --build build --target check-obelisk
+          elif [ "$RUNNER_OS" = macOS ]; then
+            sysctl hw.logicalcpu hw.memsize
+            /usr/bin/time -l cmake --build build --target check-obelisk
+          else
+            cmake --build build --target check-obelisk
+          fi
+
+      - name: Upload timing reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: obelisk-generated-files
-          path: build/generated
-          if-no-files-found: error
-          retention-days: 1
+          name: ci-timings-${{ matrix.ccache }}
+          path: |
+            build/test/lit-results.json
+            build/test/lit-trace.json
+            build/.ninja_log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Compiler cache stats
         if: always()
         run: |
           ccache --show-stats --verbose
           df -h .
+          if [ "$RUNNER_OS" = macOS ] && [ -d build/lto.cache ]; then
+            du -sh build/lto.cache
+          fi
 
       # PRs restore main's cache; branch-only saves would just compete for space.
       - name: Save compiler cache
-        if: github.ref == 'refs/heads/main'
+        if: always() && github.ref == 'refs/heads/main' && steps.build.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ matrix.ccache }}-${{ github.sha }}
 
-      - name: Run lit regression suite
-        run: cmake --build build --target check-obelisk
+      - name: Save host ThinLTO cache
+        if: always() && runner.os == 'macOS' && github.ref == 'refs/heads/main' && steps.build.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: build/lto.cache
+          key: host-lto-${{ matrix.ccache }}-${{ github.sha }}
 
   # Test wasm on every ref; main also publishes the tested site for deployment.
   wasm-build-and-test:
     name: Build and test (wasm32-unknown-emscripten)
-    # This waits for all native legs, including advisory ones.
-    needs: build-and-test
+    needs: generate-wasm-inputs
     runs-on: ubuntu-latest
     timeout-minutes: 300
-    env:
-      # Reuse the pinned SDK instead of rebuilding LLVM in CI.
-      WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
     steps:
       - uses: actions/checkout@v4
 
@@ -214,7 +275,7 @@ jobs:
             sh -c 'ccache --max-size=2G && ccache --set-config=sloppiness=pch_defines,time_macros && ccache --zero-stats'
 
       # Feed the SDK bundled in the image to CMake through a local file URL.
-      - name: Build obelisk for wasm32
+      - name: Configure obelisk for wasm32
         run: |
           docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
             -v "$PWD/build-host-generated:/obelisk-generated:ro" \
@@ -231,8 +292,30 @@ jobs:
                 -DOBELISK_GENERATED_DIR=/obelisk-generated \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-              cmake --build build-wasm --target obelisk obelisk-cov
             '
+
+      - name: Build obelisk for wasm32
+        id: build
+        run: |
+          docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
+            -v "$PWD/build-host-generated:/obelisk-generated:ro" \
+            -e CMAKE_BUILD_PARALLEL_LEVEL \
+            -w /src -e CCACHE_DIR=/ccache "$WASM_IMAGE" bash -c '
+              set -euo pipefail
+              time cmake --build build-wasm --target obelisk obelisk-cov
+            '
+
+      - name: Upload build timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-timings-wasm
+          path: |
+            build-wasm/.ninja_log
+            build-wasm/obelisk_z3_project-prefix/src/obelisk_z3_project-build/.ninja_log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Compiler cache stats
         if: always()
@@ -241,7 +324,7 @@ jobs:
             -e CCACHE_DIR=/ccache "$WASM_IMAGE" ccache --show-stats --verbose
 
       - name: Save compiler cache
-        if: github.ref == 'refs/heads/main'
+        if: always() && github.ref == 'refs/heads/main' && steps.build.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -322,10 +405,10 @@ jobs:
         with:
           path: site
 
-  # Deploy the tested artifact; wasm's dependency also enforces the native check.
+  # Building wasm can overlap native tests; publication still requires both.
   deploy-pages:
     name: Deploy Pages
-    needs: wasm-build-and-test
+    needs: [build-and-test, wasm-build-and-test]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
