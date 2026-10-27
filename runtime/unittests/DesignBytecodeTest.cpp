@@ -14476,14 +14476,15 @@ TEST(DesignBytecode, BuiltinUpcastChecksIdentityAndAncestry) {
     obelisk_rt_gc_lane_v1 *lane = nullptr;
     ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
     ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-    obelisk_rt_trace_entry_v1 trace{8,
-                                    0,
-                                    1,
-                                    OBELISK_RT_TRACE_STRONG,
-                                    flags == OBELISK_RT_DBREG_MAILBOX
-                                        ? OBELISK_RT_MANAGED_SLOT_MAILBOX
-                                        : OBELISK_RT_MANAGED_SLOT_SEMAPHORE,
-                                    nullptr};
+    obelisk_rt_trace_entry_v1 trace{
+        8,
+        0,
+        1,
+        OBELISK_RT_TRACE_STRONG,
+        static_cast<obelisk_rt_managed_slot_kind_v1>(
+            flags == OBELISK_RT_DBREG_MAILBOX ? OBELISK_RT_MANAGED_SLOT_MAILBOX
+                                            : OBELISK_RT_MANAGED_SLOT_SEMAPHORE),
+        nullptr};
     obelisk_rt_trace_layout_v1 layout{OBELISK_RT_VERSION, 0, 16, 8, &trace, 1};
     obelisk_rt_class_descriptor_v1 base{};
     base.version = OBELISK_RT_VERSION;
