@@ -58,11 +58,12 @@ SmallVector<uint8_t> serializeBytecodeImage(
       continue;
     alignTo(serializedConstants, 8);
     netDelayOffsets[index] = serializedConstants.size();
-    bool uniform = !net.propagationDelays.empty() &&
-                   net.propagationDelays.front().has_value() &&
-                   llvm::all_of(net.propagationDelays, [&](const auto &delay) {
-                     return delay == net.propagationDelays.front();
-                   });
+    bool uniform =
+        !net.propagationDelays.empty() &&
+        net.propagationDelays.front().has_value() &&
+        llvm::all_of(net.propagationDelays, [&, &net = net](const auto &delay) {
+          return delay == net.propagationDelays.front();
+        });
     netDelayBitwise[index] = !uniform;
     if (uniform) {
       for (uint64_t delay : *net.propagationDelays.front())

@@ -500,8 +500,9 @@ void ObeliskSimInlinePass::runOnOperation() {
 
     auto [leafEntry, insertedLeaf] = leafCache.try_emplace(callee, true);
     if (insertedLeaf)
-      forEachDirectCall(callee,
-                        [&](sim::SimCallOp) { leafEntry->second = false; });
+      forEachDirectCall(callee, [&, &leafEntry = leafEntry](sim::SimCallOp) {
+        leafEntry->second = false;
+      });
     bool leaf = leafEntry->second;
     bool tiny = leaf && calleeCost <= preset.tinyCost;
     bool specializes = false;

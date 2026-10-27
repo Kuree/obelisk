@@ -46,7 +46,15 @@ TEST(GeneratedDesignDatabase, LexicalInheritance) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
-      checksum};
+      checksum,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -219,7 +227,8 @@ TEST(GeneratedDesignDatabase, LexicalInheritance) {
     EXPECT_FALSE(statement);
     return result;
   };
-  auto baseCursor = cursor("Base"), midCursor = cursor("Mid");
+  cursor("Base");
+  auto midCursor = cursor("Mid");
   auto clauseCursor = target(midCursor, vpiExtends);
   auto typeCursor = target(clauseCursor, vpiClassTypespec);
   auto assignmentCursor = target(typeCursor, vpiParamAssign, true, 1);

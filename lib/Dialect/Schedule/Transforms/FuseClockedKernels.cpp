@@ -1599,7 +1599,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     };
     auto changedAfter = [&](uint64_t root) { return changedIn(window, root); };
     // Returns why this kernel cannot be deferred, or an empty string.
-    auto analyzeDeferral = [&]() -> StringRef {
+    auto analyzeDeferral = [&, &members = members]() -> StringRef {
       // An Inactive event of the phase (a zero or variable delay) and what it
       // wakes run in a later iteration than the original members, so they
       // may run before the deferred kernel only if it reads nothing they
@@ -1659,7 +1659,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     // The roots one kernel mode may store directly. `mayFollow` holds for
     // every activation that may run between the kernel and its NBA region.
     enum class Mode { Immediate, Deferred };
-    auto planRoots = [&](Mode mode, llvm::StringMap<uint64_t> &reasons)
+    auto planRoots = [&, &members = members](Mode mode,
+                                             llvm::StringMap<uint64_t> &reasons)
         -> std::optional<DenseSet<uint64_t>> {
       auto refuse = [&](StringRef reason) { ++reasons[reason]; };
       bool deferred = mode == Mode::Deferred;
@@ -2285,7 +2286,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       sim::SimNBAEnqueueOp enqueue;
       unsigned root;
       /// Views from the target back toward its root handle.
-      SmallVector<Operation *> chain;
+      SmallVector<Operation *> chain{};
       /// How many sites may run before this one; orders the commit.
       unsigned position = 0;
     };

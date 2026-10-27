@@ -344,7 +344,7 @@ prepareManagedClassInventory(ModuleOp module,
   struct InterfaceFrame {
     sim::SimClassDeclOp declaration;
     size_t base = 0;
-    Requirements requirements;
+    Requirements requirements{};
   };
   for (auto root : classes) {
     if (!root.getIsInterface() || interfaceState.lookup(root.getSymName()) == 2)

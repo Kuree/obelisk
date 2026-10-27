@@ -1843,7 +1843,7 @@ void jsonFunctionalContributors(
   out.array([&] {
     for (const auto &[run, contributor] : grouped) {
       const Run *metadata = findRun(report, run);
-      out.object([&] {
+      out.object([&, &run = run, &contributor = contributor] {
         out.attribute("uuid", formatUUID(run));
         out.attribute("name", metadata ? metadata->name : std::string{});
         out.attribute("count", contributor.value);
@@ -2439,7 +2439,7 @@ void jsonReport(
               return;
             for (const auto &[run, value] :
                  computed->second.distributeFirstOverrides)
-              out.object([&] {
+              out.object([&, &run = run, &value = value] {
                 out.attribute("run", formatUUID(run));
                 out.attribute("value", value);
               });
@@ -3130,7 +3130,7 @@ void jsonReport(
           jsonFixedAttribute(out, "percent", instance.percentage);
           out.attributeArray("sources", [&] {
             for (const auto &[run, id] : instance.sources)
-              out.object([&] {
+              out.object([&, &run = run, &id = id] {
                 out.attribute("run", formatUUID(run));
                 out.attribute("id", id);
               });

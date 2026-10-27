@@ -2957,7 +2957,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                    "descriptor space";
             return abort();
           }
-          auto addState = [&](StringRef suffix, Type type) -> StringAttr {
+          auto addState = [&, &index = index](StringRef suffix,
+                                              Type type) -> StringAttr {
             std::string path = (llvm::Twine(getHierarchyName(property)) +
                                 ".$rand_member_" + llvm::Twine(index) + suffix)
                                    .str();
@@ -5952,14 +5953,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       StringAttr randcPositionPath;
       IntegerAttr randomModeStorage;
       SmallVector<RandomSubdomain> domains;
-      SmallVector<RandomObjectPathElement> nestedObjectPath;
-      DenseI64ArrayAttr storagePath;
-      Type storageType;
+      SmallVector<RandomObjectPathElement> nestedObjectPath{};
+      DenseI64ArrayAttr storagePath{};
+      Type storageType{};
       uint64_t parentModeMask = 0;
-      sim::RandomStructMemberAttr structMember;
+      sim::RandomStructMemberAttr structMember{};
       uint64_t staticModeMask = UINT64_MAX;
       /// The size property whose container's leading elements this is.
-      std::optional<unsigned> containerElementsOf;
+      std::optional<unsigned> containerElementsOf{};
     };
     struct RandomContainerProperty {
       Operation *source;
@@ -5968,12 +5969,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       Type elementType;
       unsigned elementWidth;
       unsigned modeIndex;
-      FlatSymbolRefAttr nestedObjectField;
-      Type nestedObjectType;
-      Type nestedObjectStorageType;
-      unsigned nestedModeIndex;
-      SmallVector<RandomObjectPathElement> nestedObjectPath;
-      bool inertClassHandles;
+      FlatSymbolRefAttr nestedObjectField{};
+      Type nestedObjectType{};
+      Type nestedObjectStorageType{};
+      unsigned nestedModeIndex{};
+      SmallVector<RandomObjectPathElement> nestedObjectPath{};
+      bool inertClassHandles{};
     };
     struct NestedObjectPlan {
       Operation *source;

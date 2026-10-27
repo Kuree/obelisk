@@ -44,9 +44,9 @@ struct FunctionInfo {
   llvm::BitVector eraseArguments;
   llvm::BitVector eraseResults;
   llvm::BitVector dpiOutputArguments;
-  SmallVector<sim::SimReturnOp> returns;
+  SmallVector<sim::SimReturnOp> returns{};
   bool pinned = false;
-  StringRef pinReason;
+  StringRef pinReason{};
   bool discardable = false;
 };
 

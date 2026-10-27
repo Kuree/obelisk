@@ -296,7 +296,7 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
         bor(band(oldUnknown, inv(writeMask)), band(stagedUnknown, writeMask));
     Value mask =
         arith::ShLIOp::create(b, loc, resize(widthMask, type), typedShift);
-    auto store = [&](Value raw, Value value, Value destination) {
+    auto store = [&, &bits = bits](Value raw, Value value, Value destination) {
       Value keep = arith::XOrIOp::create(
           b, loc, mask,
           LLVM::ConstantOp::create(

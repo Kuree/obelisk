@@ -39,7 +39,15 @@ TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               checksum};
+                                               checksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -365,7 +373,15 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
                                                  image.data(),
                                                  image.size(),
                                                  encoded->stateBitCount,
-                                                 checksum};
+                                                 checksum,
+                                                 nullptr,
+                                                 0,
+                                                 0,
+                                                 0,
+                                                 nullptr,
+                                                 0,
+                                                 nullptr,
+                                                 0};
     EXPECT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
     HeaderView header(image.data());
     SemanticDirectoryView directory(image.data() + header.getReserved());

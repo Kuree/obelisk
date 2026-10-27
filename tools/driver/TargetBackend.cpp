@@ -1578,7 +1578,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         module.getContext()->getThreadPool().async(std::move(releaseMLIR));
   else
     releaseMLIR();
-  auto waitForMLIRTeardown = llvm::make_scope_exit([&] {
+  auto waitForMLIRTeardown = llvm::scope_exit([&] {
     if (mlirTeardown.valid())
       mlirTeardown.wait();
   });

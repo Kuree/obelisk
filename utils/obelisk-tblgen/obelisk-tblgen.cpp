@@ -1335,7 +1335,6 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
       return false;
     }
     DenseSet<const Record *> seenRequirements;
-    uint32_t requirementMask = 0;
     for (const Record *requirement :
          policy->getValueAsListOfDefs("requirements")) {
       uint32_t value =
@@ -1346,7 +1345,6 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
                    "VPI value policy has duplicate or invalid requirements");
         return false;
       }
-      requirementMask |= value;
     }
     for (const Record *source : expandedSets.lookup(sources)) {
       uint32_t value = static_cast<uint32_t>(source->getValueAsInt("value"));

@@ -63,7 +63,7 @@ getDriverStrengths(Operation *unit) {
   sim::Strength strength1 = defaultStrength;
   std::optional<semantic::SVDriveStrength> semanticStrength0;
   std::optional<semantic::SVDriveStrength> semanticStrength1;
-  auto readStrengths = [&]<typename OpTy>(OpTy op) {
+  auto readStrengths = [&](auto op) {
     semanticStrength0 = op.getDriveStrength0();
     semanticStrength1 = op.getDriveStrength1();
   };

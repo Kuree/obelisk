@@ -154,7 +154,7 @@ struct NativeEvalClockKernel {
   uint32_t edge = 0;
   uint64_t lowBit = 0;
   uint64_t bitWidth = 0;
-  std::string activeName;
+  std::string activeName{};
 
   auto key() const { return std::tuple{staticState, lowBit, bitWidth, edge}; }
 };
@@ -284,13 +284,13 @@ struct NativeEvalCoordinatorPlan {
   mlir::ArrayRef<std::string> dynamicNBAValidNames;
   bool hasOrderedNBA = false;
   /// Shared bounded ranked sweeps, indexed by the original owner identity.
-  mlir::ArrayRef<std::string> rankedGroupExecutors;
+  mlir::ArrayRef<std::string> rankedGroupExecutors{};
   // Writable VPI alone needs scheduling/override guards. Knownness remains
   // independent. These exact source actor dependencies and clock ingress bits
   // retain the original fine activations when a whole owner is fractured.
   bool writableVPI = false;
-  mlir::ArrayRef<llvm::SmallVector<uint32_t>> ownerStaticStates;
-  mlir::ArrayRef<llvm::APInt> ownerFineIngress;
+  mlir::ArrayRef<llvm::SmallVector<uint32_t>> ownerStaticStates{};
+  mlir::ArrayRef<llvm::APInt> ownerFineIngress{};
   /// Owners at or above this bit resume in the Inactive region. The lowest
   /// pending bit is one of them only when every other owner is idle.
   uint32_t firstDeferredBit = UINT32_MAX;

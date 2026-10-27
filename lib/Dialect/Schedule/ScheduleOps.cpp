@@ -671,7 +671,8 @@ LogicalResult NativeSuspendObserveOp::verify() {
   auto planes = get<Field::NativeInitialPlaneCounts>(*this);
   auto conditionBegin = get<Field::NativeConditionOperandBegin>(*this);
   auto continuationBegin = get<Field::NativeContinuationOperandBegin>(*this);
-  if (getEdges().empty() || !planes || planes.size() != getEdges().size() ||
+  if (getEdges().empty() || !planes ||
+      static_cast<size_t>(planes.size()) != getEdges().size() ||
       !conditionBegin || !continuationBegin ||
       getConditionCountAttr().getValue().isNegative() ||
       getConditionIndices().size() != getEdges().size())
@@ -1039,7 +1040,8 @@ LogicalResult NativeObserverOp::verify() {
     return emitOpError(
         "requires typed observer identity, result, and dependency metadata");
   if (getCaptureCount() <= getNumOperands() &&
-      (kinds.size() != getNumOperands() - getCaptureCount() ||
+      (static_cast<uint64_t>(kinds.size()) !=
+           getNumOperands() - getCaptureCount() ||
        widths.size() != kinds.size() || indices.size() != kinds.size()))
     return emitOpError(
         "dependency metadata must match the dependency operands");

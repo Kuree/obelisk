@@ -89,6 +89,7 @@ TEST(GeneratedDesignDatabase, FrameReferenceAliases) {
                                            4,
                                            4,
                                            32,
+                                           nullptr,
                                            nullptr};
   for (unsigned kind = 0; kind != 5; ++kind) {
     SCOPED_TRACE(kind);

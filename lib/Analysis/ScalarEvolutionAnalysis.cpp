@@ -381,7 +381,7 @@ struct ScalarEvolutionAnalysis::Impl {
       return builder.CreateICmp(predicate, lhs, rhs);
     }
     if (auto cmp = dyn_cast<sim::SimLogicCompareOp>(op)) {
-      llvm::CmpInst::Predicate predicate;
+      std::optional<llvm::CmpInst::Predicate> predicate;
       switch (cmp.getKind()) {
       case sim::CompareKind::Eq:
       case sim::CompareKind::CaseEq:
@@ -419,10 +419,10 @@ struct ScalarEvolutionAnalysis::Impl {
       case sim::CompareKind::UGE:
         predicate = llvm::CmpInst::ICMP_UGE;
         break;
-      default:
-        return nullptr;
       }
-      return builder.CreateICmp(predicate, lhs, rhs);
+      if (!predicate)
+        return nullptr;
+      return builder.CreateICmp(*predicate, lhs, rhs);
     }
     if (isa<arith::SelectOp>(op))
       return builder.CreateSelect(lhs, rhs, get(op->getOperand(2)));

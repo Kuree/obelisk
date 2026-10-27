@@ -37,10 +37,6 @@ struct IEEE754Double {
       (uint64_t{1} << (exponentBits - 1)) - 1;
   static constexpr uint64_t implicitBit = uint64_t{1} << fractionBits;
   static constexpr uint64_t fractionMask = implicitBit - 1;
-  static constexpr unsigned overflowThresholdWidth = exponentBias + 1;
-  // Round-to-nearest overflows at max-finite plus half of its ULP.
-  static constexpr unsigned overflowThresholdLowBit =
-      overflowThresholdWidth - fractionBits - 2;
 };
 
 class TimeConstantLowering final

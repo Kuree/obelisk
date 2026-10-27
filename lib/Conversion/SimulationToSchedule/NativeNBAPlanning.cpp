@@ -90,7 +90,8 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
       continue;
     uint32_t root = static_cast<uint32_t>(plan.roots.size());
     plan.roots.push_back({commit.getId(), decoded.id,
-                          static_cast<uint64_t>(bound->width), nullptr});
+                          static_cast<uint64_t>(bound->width), nullptr, nullptr,
+                          0});
     plan.rootDescriptors.push_back(effect.getDescriptor());
     plan.generatedAccumulators.emplace_back();
     plan.generatedOffsets.push_back(bound->offset);

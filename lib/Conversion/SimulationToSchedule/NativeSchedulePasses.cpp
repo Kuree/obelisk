@@ -510,7 +510,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                     (requireStaticNBA &&
                      !stateLayout->nbaHandles.contains(decoded.id)));
           };
-          current.walk([&](Operation *operation) {
+          current.walk([&, &classification =
+                               classification](Operation *operation) {
             // File I/O (IEEE 1800-2023 21.3) and value change dumps (21.7)
             // operate on runtime-owned descriptor tables and dump state. A
             // cold block of the body still runs inline on its four-state
@@ -707,7 +708,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         sim::SimFuncOp current = pending.pop_back_val();
         if (!visited.insert(current.getOperation()).second)
           continue;
-        current.walk([&](sim::SimNBAEnqueueOp enqueue) {
+        current.walk([&, &index = index,
+                      &function = function](sim::SimNBAEnqueueOp enqueue) {
           schedule::NBASiteAttr site = enqueue.getSiteAttr();
           auto root = site ? staticNBAPlan.siteRoots.find(site.getId())
                            : staticNBAPlan.siteRoots.end();

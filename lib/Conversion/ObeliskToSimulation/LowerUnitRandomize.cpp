@@ -2552,7 +2552,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       unsigned count = layout ? layout->elementCount : 1;
       unsigned width = layout ? layout->elementWidth : property.width;
       unsigned first = cyclicFields.size();
-      std::function<void(Type, Value, Value, Value)> visit = [&](Type type,
+      std::function<void(Type, Value, Value, Value)> visit = [&, &index = index,
+                                                              &property =
+                                                                  property](
+                                                                 Type type,
                                                                  Value key,
                                                                  Value position,
                                                                  Value domain) {
@@ -3195,8 +3198,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t itemIdentity;
     bool perRange;
     uint32_t intervalFlags = 0;
-    Value capturedLower;
-    Value capturedUpper;
+    Value capturedLower{};
+    Value capturedUpper{};
   };
   // IEEE 1800-2023 18.5.3 distributes the value of any integral expression
   // that contains a rand variable. A rand property or a constant selection of
@@ -5647,7 +5650,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                            ? getChildren(root)
                                            : SmallVector<Operation *>{root};
       for (Operation *item : items)
-        item->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+        item->walk<WalkOrder::PreOrder>([&, &root = root](Operation *nested) {
           if (auto expression =
                   dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
             if (expression.getIsSoft()) {
@@ -10804,7 +10807,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value key = property.nextRandcKey;
       Value position = property.nextRandcPosition;
       if (useCyclicPlan) {
-        auto readHistory = [&](Type type, ArrayRef<Value> references) -> Value {
+        auto readHistory = [&, &index = index](
+                               Type type, ArrayRef<Value> references) -> Value {
           unsigned cursor = cyclicFieldRanges[index].first;
           std::function<Value(Type)> build = [&](Type current) -> Value {
             if (auto array = dyn_cast<sim::UnpackedArrayType>(current)) {
@@ -11023,7 +11027,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       container = sim::SimManagedLoadOp::create(
           builder, location, property.type, property.reference);
     }
-    auto randomElement = [&](Value &state) -> FailureOr<Value> {
+    auto randomElement = [&, &property =
+                                 property](Value &state) -> FailureOr<Value> {
       Value bits = next64(state);
       Type scalarType =
           IntegerType::get(function.getContext(), property.elementWidth);

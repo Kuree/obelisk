@@ -1,0 +1,33 @@
+# RUN: %split-file %s %t
+# RUN: not obelisk -O0 -emit-sim %t/input.sv -o %t/input.mlir 2>&1 | FileCheck %s --check-prefix=INPUT
+# RUN: not obelisk -O0 -emit-sim %t/output.sv -o %t/output.mlir 2>&1 | FileCheck %s --check-prefix=OUTPUT
+
+# The design precision and clocking time unit are both 1ps. A real skew of
+# exactly 2^64 ticks must fail before conversion to uint64_t, including on
+# hosts where long double has only binary64 precision and rounds UINT64_MAX
+# up to that same value.
+
+# INPUT: error: clocking input skew exceeds simulation time
+# OUTPUT: error: clocking output skew exceeds simulation time
+
+#--- input.sv
+module top;
+  timeunit 1ps;
+  timeprecision 1ps;
+  bit clk, data, sink;
+  clocking cb @(posedge clk);
+    input #18446744073709551616.0 data;
+  endclocking
+  initial sink = cb.data;
+endmodule
+
+#--- output.sv
+module top;
+  timeunit 1ps;
+  timeprecision 1ps;
+  bit clk, data;
+  clocking cb @(posedge clk);
+    output #18446744073709551616.0 data;
+  endclocking
+  initial cb.data <= 1;
+endmodule

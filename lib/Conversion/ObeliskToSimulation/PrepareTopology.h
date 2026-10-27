@@ -26,12 +26,12 @@ struct DescriptorInfo {
   uint64_t scopeId;
   mlir::Type type;
   sim::NetResolutionKind netKind = sim::NetResolutionKind::Wire;
-  sim::VPITypeSemanticsAttr vpiType;
-  mlir::Type rootType;
+  sim::VPITypeSemanticsAttr vpiType{};
+  mlir::Type rootType{};
   uint64_t viewOffset = 0;
   uint64_t packedViewOffset = 0;
-  mlir::SmallVector<int64_t> viewIndices;
-  mlir::Type aggregateViewType;
+  mlir::SmallVector<int64_t> viewIndices{};
+  mlir::Type aggregateViewType{};
   bool delayedNet = false;
 };
 

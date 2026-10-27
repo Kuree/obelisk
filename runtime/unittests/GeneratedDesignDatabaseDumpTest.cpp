@@ -148,6 +148,14 @@ TEST(GeneratedDesignDatabase, Dump) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
+      0,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
       0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   ASSERT_NE(execution.design_database, nullptr);
@@ -1040,7 +1048,15 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
-      bytecodeChecksum};
+      bytecodeChecksum,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
 
   obelisk_rt_context *runtime = nullptr;
@@ -1286,7 +1302,15 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
                                                        image.data(),
                                                        image.size(),
                                                        encoded->stateBitCount,
-                                                       bytecodeChecksum};
+                                                       bytecodeChecksum,
+                                                       nullptr,
+                                                       0,
+                                                       0,
+                                                       0,
+                                                       nullptr,
+                                                       0,
+                                                       nullptr,
+                                                       0};
     EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
               OBELISK_RT_INVALID_DESIGN);
   };
@@ -1417,7 +1441,15 @@ TEST(GeneratedDesignDatabase, InterModPathQueries) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
-      bytecodeChecksum};
+      bytecodeChecksum,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
 
   obelisk_rt_context *runtime = nullptr;
@@ -1582,7 +1614,15 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
-      bytecodeChecksum};
+      bytecodeChecksum,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
 
   obelisk_rt_context *runtime = nullptr;
@@ -1913,7 +1953,15 @@ TEST(GeneratedDesignDatabase, NetIdentityQueries) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
-      bytecodeChecksum};
+      bytecodeChecksum,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
 
   obelisk_rt_context *runtime = nullptr;
@@ -2146,7 +2194,15 @@ TEST(GeneratedDesignDatabase, ClassSpecializationBindings) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               bytecodeChecksum};
+                                               bytecodeChecksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -2316,7 +2372,15 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
-      bytecodeChecksum};
+      bytecodeChecksum,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -2488,7 +2552,15 @@ TEST(GeneratedDesignDatabase, ClassConstraints) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               bytecodeChecksum};
+                                               bytecodeChecksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -2589,7 +2661,15 @@ TEST(GeneratedDesignDatabase, ClassParameters) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               bytecodeChecksum};
+                                               bytecodeChecksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -2707,7 +2787,15 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               bytecodeChecksum};
+                                               bytecodeChecksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -3059,7 +3147,15 @@ TEST(GeneratedDesignDatabase, InheritedClassMembers) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               bytecodeChecksum};
+                                               bytecodeChecksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -3321,7 +3417,15 @@ TEST(GeneratedDesignDatabase, ClassMemberArrays) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               checksum};
+                                               checksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -3670,7 +3774,15 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               checksum};
+                                               checksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -4099,7 +4211,15 @@ TEST(GeneratedDesignDatabase, BuiltinClassInheritance) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               checksum};
+                                               checksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -4196,7 +4316,15 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               checksum};
+                                               checksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -4534,7 +4662,15 @@ TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
       encoded->designDatabase.data(),
       encoded->designDatabase.size(),
       encoded->stateBitCount,
-      checksum};
+      checksum,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
@@ -4668,7 +4804,15 @@ TEST(GeneratedDesignDatabase, SourceTypeParameters) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               bytecodeChecksum};
+                                               bytecodeChecksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),

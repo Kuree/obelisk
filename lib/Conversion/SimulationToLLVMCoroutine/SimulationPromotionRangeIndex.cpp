@@ -348,9 +348,9 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   // same proof actions before dependent evaluation (IEEE 1800-2023 4.3,
   // 6.3.1, 6.11.2, 38.34), with no new state copies or scheduler boundary.
   runtime::PromotionBucketIndex buckets;
-  if (entries.size() >= bucketMinEntries && entries.size() <= UINT64_MAX / 64 &&
-      runtime::buildPromotionBucketIndex(entries, entries.size() * 64,
-                                         buckets)) {
+  uint64_t entryCount = entries.size();
+  if (entryCount >= bucketMinEntries && entryCount <= UINT64_MAX / 64 &&
+      runtime::buildPromotionBucketIndex(entries, entryCount * 64, buckets)) {
     builder.setInsertionPointToStart(module.getBody());
     auto i32 = builder.getI32Type();
     auto starts = LLVM::GlobalOp::create(

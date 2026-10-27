@@ -228,7 +228,9 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     clocked &= !deferred;
     DenseSet<StringAttr> summarizedActivations;
     node.plan.repeatable = !clocked && activationInputs.sourceGraph == graph;
-    bool safe = !deferred && llvm::all_of(direct.fragmentIDs, [&](uint32_t id) {
+    bool safe = !deferred && llvm::all_of(direct.fragmentIDs, [&, &record =
+                                                                      record](
+                                                                  uint32_t id) {
       auto fragment = fragments.find(id);
       if (fragment == fragments.end() ||
           fragment->second.getRegion() != schedule::ComputeRegionKind::Active)
@@ -261,7 +263,8 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
       bool activation = !clocked && activationInputs.sourceGraph == graph &&
                         inputs != activationInputs.liveIns.end() &&
                         outputs != activationInputs.mayWrites.end();
-      bool effectsSafe = llvm::all_of(effects, [&](Attribute raw) {
+      bool effectsSafe = llvm::all_of(effects, [&, &record =
+                                                       record](Attribute raw) {
         auto effect = cast<schedule::ComputeEffectAttr>(raw);
         bool net = effect.getResource() == schedule::ComputeResourceKind::Net;
         // IEEE 1800-2023 6.6.1, 4.9.1: an isolated wire whose strong,
@@ -663,7 +666,8 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
   for (const auto &[owner, effects] : effectsByOwner) {
     if (!changeOwners.contains(owner))
       continue;
-    bool needsProof = llvm::any_of(effects, [&](auto effect) {
+    bool needsProof = llvm::any_of(effects, [&,
+                                             &effects = effects](auto effect) {
       if (effect.getDynamic())
         return true;
       if (effect.getEffect() != schedule::ComputeEffectKind::Read)
@@ -941,7 +945,9 @@ resolveNativeEvalPlan(ModuleOp module,
       auto candidates = directsByWrapper.find(executor);
       if (candidates == directsByWrapper.end())
         continue;
-      auto found = llvm::find_if(candidates->second, [&](unsigned candidate) {
+      auto found = llvm::find_if(candidates->second, [&, &recordIndex =
+                                                             recordIndex](
+                                                         unsigned candidate) {
         return directFragments[candidate].actorSlot ==
                    result.mergedFragments[recordIndex].actor_slot &&
                directFragments[candidate].continuation ==
@@ -980,9 +986,10 @@ resolveNativeEvalPlan(ModuleOp module,
     sharingPairs.erase(std::unique(sharingPairs.begin(), sharingPairs.end()),
                        sharingPairs.end());
     for (auto [first, second] : sharingPairs) {
-      auto shared = llvm::find_if(ownerFragments[first], [&](uint32_t id) {
-        return llvm::binary_search(ownerFragments[second], id);
-      });
+      auto shared = llvm::find_if(
+          ownerFragments[first], [&, &second = second](uint32_t id) {
+            return llvm::binary_search(ownerFragments[second], id);
+          });
       unsigned coordinator = ownerIsCoordinator[first] ? first : second;
       unsigned exact = ownerIsCoordinator[first] ? second : first;
       bool certifiedPair =
@@ -1245,7 +1252,9 @@ resolveNativeEvalPlan(ModuleOp module,
     }
   }
   for (auto [recordIndex, executor] : llvm::enumerate(result.mergedExecutors)) {
-    auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
+    auto direct = llvm::find_if(directFragments, [&, &executor = executor,
+                                                  &recordIndex = recordIndex](
+                                                     const auto &candidate) {
       return candidate.wrapper == executor &&
              candidate.actorSlot ==
                  result.mergedFragments[recordIndex].actor_slot &&

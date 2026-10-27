@@ -36,7 +36,7 @@ struct Instruction {
   uint8_t flags = 0;
   uint32_t operand = 0;
   uint32_t auxiliary = 0;
-  std::vector<uint64_t> literal;
+  std::vector<uint64_t> literal{};
 };
 
 struct DomainRecord {

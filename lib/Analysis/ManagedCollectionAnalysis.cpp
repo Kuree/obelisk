@@ -103,7 +103,7 @@ bool isForeignEntry(sim::SimFuncOp function) {
 /// task call that runs the task in the caller's logical process.
 struct CallSite {
   Operation *operation;
-  SmallVector<unsigned> callees;
+  SmallVector<unsigned> callees{};
   bool unresolved = false;
   bool reentrant = false;
 };
@@ -119,10 +119,10 @@ struct FunctionInfo {
   sim::SimFuncOp function;
   bool allocates = false;
   bool polls = false;
-  SmallVector<CallSite> calls;
+  SmallVector<CallSite> calls{};
   /// Top-level operations grouped by block, in region order.
-  SmallVector<SmallVector<BodyOperation>> blocks;
-  llvm::BitVector cyclicBlocks;
+  SmallVector<SmallVector<BodyOperation>> blocks{};
+  llvm::BitVector cyclicBlocks{};
 };
 
 class SummaryState final : public AnalysisState {
@@ -267,7 +267,7 @@ void CallGraph::build(Operation *root) {
       for (Operation &operation : block) {
         BodyOperation &entry = operations.emplace_back();
         entry.operation = &operation;
-        operation.walk([&](Operation *nested) {
+        operation.walk([&, &info = info, &index = index](Operation *nested) {
           if (isa<sim::SimGCSafepointOp>(nested))
             info.polls = true;
           if (mayAllocateManagedStorage(nested))

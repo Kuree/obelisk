@@ -14,7 +14,6 @@
 namespace {
 
 constexpr uint64_t kPlanHeaderSize = 32;
-constexpr uint64_t kPlanRecordSize = 48;
 
 struct Blob {
   std::vector<uint64_t> words;

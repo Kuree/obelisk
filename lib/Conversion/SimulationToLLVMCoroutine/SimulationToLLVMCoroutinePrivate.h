@@ -205,7 +205,7 @@ struct DirectStaticStateRange {
   uint32_t staticID;
   bool guarded;
   unsigned containerWidth = 0;
-  std::optional<PackedAccessUnit> accessUnit;
+  std::optional<PackedAccessUnit> accessUnit{};
 };
 
 struct NativeStateAccessInfo {

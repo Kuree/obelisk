@@ -139,7 +139,8 @@ static void coalesceFunction(FunctionReadyUpdates &input) {
       auto [base, global, capacity, word] = key;
       // Distinct globals cannot alias. Opaque pointers and inconsistent
       // layouts require materialization rather than a guessed disjoint range.
-      if (llvm::any_of(pending, [&](const auto &entry) {
+      if (llvm::any_of(pending, [&, &global = global, &base = base,
+                                 &capacity = capacity](const auto &entry) {
             auto [otherBase, otherGlobal, otherCapacity, otherWord] =
                 entry.first;
             if (global && otherGlobal && global != otherGlobal)

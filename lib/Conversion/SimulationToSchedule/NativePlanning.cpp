@@ -1103,7 +1103,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
       uint64_t fanoutWidth =
           edge == OBELISK_RT_WAIT_EDGE_CHANGE ? effect.getWidth() : 1;
       plan.entries.push_back({decoded.id, actor->second, site.getId(), edge,
-                              UINT32_MAX, flags, effect.getLow(), fanoutWidth});
+                              UINT32_MAX, flags, effect.getLow(), fanoutWidth,
+                              0, 0});
     }
   }
   llvm::sort(plan.entries, [](const auto &lhs, const auto &rhs) {

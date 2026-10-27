@@ -96,6 +96,7 @@ const obelisk_rt_element_type_v1 stringCharacterElement{
     1,
     1,
     8,
+    nullptr,
     nullptr};
 
 const obelisk_rt_element_type_v1 coverageIntegerElement{
@@ -107,6 +108,7 @@ const obelisk_rt_element_type_v1 coverageIntegerElement{
     sizeof(uint64_t),
     alignof(uint64_t),
     64,
+    nullptr,
     nullptr};
 const obelisk_rt_trace_entry_v1 coverageStringTraceEntry{
     0, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING, nullptr};
@@ -123,7 +125,8 @@ const obelisk_rt_element_type_v1 coverageStringElement{
     sizeof(obelisk_rt_string_v1),
     alignof(obelisk_rt_string_v1),
     64,
-    &coverageStringTraceLayout};
+    &coverageStringTraceLayout,
+    nullptr};
 
 struct ReferencePathHeader {
   const void *descriptor;
@@ -193,7 +196,12 @@ const obelisk_rt_class_descriptor_v1 referenceWeakDescriptor{
     0,
     referenceWeakName,
     sizeof(referenceWeakName) - 1,
-    nullptr};
+    nullptr,
+    nullptr,
+    0,
+    0,
+    0,
+    0};
 
 constexpr uint64_t emptyAssocHash = 0;
 constexpr uint64_t stringTagMask = 3;
@@ -4816,17 +4824,16 @@ static obelisk_rt_status internElementType(
   std::unique_ptr<OwnedElementTypeDescriptor> owned;
   OBELISK_RT_TRY { owned = std::make_unique<OwnedElementTypeDescriptor>(); }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  owned->descriptor = {
-      OBELISK_RT_VERSION,
-      static_cast<obelisk_rt_element_kind_v1>(elementKind),
-      typeID,
-      elementFlags,
-      0,
-      valueSize,
-      alignment,
-      bitWidth,
-      nullptr,
-  };
+  owned->descriptor = {OBELISK_RT_VERSION,
+                       static_cast<obelisk_rt_element_kind_v1>(elementKind),
+                       typeID,
+                       elementFlags,
+                       0,
+                       valueSize,
+                       alignment,
+                       bitWidth,
+                       nullptr,
+                       nullptr};
   uint32_t slotKind = 0;
   if (elementKind == OBELISK_RT_ELEMENT_CLASS_HANDLE)
     slotKind = OBELISK_RT_MANAGED_SLOT_CLASS;

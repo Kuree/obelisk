@@ -198,7 +198,12 @@ TEST_F(CoverageBlockEventsTest,
                                                        0,
                                                        className,
                                                        sizeof(className) - 1,
-                                                       nullptr};
+                                                       nullptr,
+                                                       nullptr,
+                                                       0,
+                                                       0,
+                                                       0,
+                                                       0};
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);

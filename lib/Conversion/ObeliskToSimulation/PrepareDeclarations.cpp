@@ -1522,7 +1522,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
               property.getRandMode() == semantic::SVRandMode::None
                   ? 0
                   : randomPropertyIndex++;
-          auto addField = [&](StringRef suffix, Type fieldType) {
+          auto addField = [&, &index = index](StringRef suffix,
+                                              Type fieldType) {
             std::string name =
                 fieldName + "_member_" + std::to_string(index) + suffix.str();
             auto symbol = FlatSymbolRefAttr::get(context, name);

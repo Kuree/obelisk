@@ -813,7 +813,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
     uint32_t ordinal = 0;
     SmallVector<IntegerAttr> candidates;
     SmallVector<std::string> iteratorPaths;
-    sim::UnpackedStructType crossTuple;
+    sim::UnpackedStructType crossTuple{};
     uint64_t selector = 0;
   };
   SmallVector<ConstructorExpression> constructorExpressions;
@@ -974,7 +974,8 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
         Type scalar = stateScalar;
         bool inconsistentIteratorType = false;
         if (!scalar && !path.empty()) {
-          expression->walk([&](semantic::SVNamedValueExpressionOp reference) {
+          expression->walk([&, &path = path](
+                               semantic::SVNamedValueExpressionOp reference) {
             if (reference.getReferencedPath() != path)
               return;
             FailureOr<Type> normalized = getNormalizedSemanticType(reference);

@@ -90,10 +90,6 @@ std::string formatReal(double value) {
   return std::string(buffer.data(), end);
 }
 
-template <typename Value> std::string formatConstant(const Value &value) {
-  return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
-}
-
 /// Value of an expression that elaboration folded to an integer constant. It
 /// is redundant with the expression tree beneath it, so consumers may ignore
 /// it; what it buys is not having to fold that tree a second time. Read back
@@ -5874,7 +5870,6 @@ private:
         }
       }
     } else {
-      using SyntaxKind = slang::syntax::SyntaxKind;
       auto valueReference = [&](const slang::syntax::NameSyntax &name) {
         slang::ast::LookupResult lookup;
         slang::ast::Lookup::name(name, context, slang::ast::LookupFlags::None,

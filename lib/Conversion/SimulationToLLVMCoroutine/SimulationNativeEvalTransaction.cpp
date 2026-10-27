@@ -36,7 +36,7 @@ struct PendingRoot {
 struct PendingWord {
   uint32_t canonicalWord;
   uint64_t offset, mask = 0;
-  SmallVector<unsigned> roots;
+  SmallVector<unsigned> roots{};
 };
 
 struct Address {

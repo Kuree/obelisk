@@ -306,7 +306,7 @@ TEST(GeneratedDesignDatabase, LiveUnionMembers) {
             OBELISK_RT_OK);
   std::vector<uint8_t> bytes((taggedInfo.bit_width + 7) / 8),
       unknown(bytes.size());
-  auto tag = [&](unsigned ordinal) {
+  auto tag = [&, &taggedInfo = taggedInfo](unsigned ordinal) {
     setBits(bytes, taggedInfo.bit_width - taggedLayout.tag_bits,
             taggedLayout.tag_bits, ordinal);
   };

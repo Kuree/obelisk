@@ -3785,7 +3785,15 @@ struct Fixture {
                  database.data(),
                  database.size(),
                  65,
-                 imageChecksum(bytecode)};
+                 imageChecksum(bytecode),
+                 nullptr,
+                 0,
+                 0,
+                 0,
+                 nullptr,
+                 0,
+                 nullptr,
+                 0};
     entry = {&execution, 0, 0};
     layout = {OBELISK_RT_VERSION,
               0,
@@ -7796,7 +7804,12 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
                                                        0,
                                                        className,
                                                        sizeof(className) - 1,
-                                                       nullptr};
+                                                       nullptr,
+                                                       nullptr,
+                                                       0,
+                                                       0,
+                                                       0,
+                                                       0};
   obelisk_rt_object_v1 *firstObject = nullptr;
   obelisk_rt_object_v1 *secondObject = nullptr;
   ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &classDescriptor, &firstObject),
@@ -13139,7 +13152,15 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
       nullptr,
       0,
       65,
-      imageChecksum(bytecode)};
+      imageChecksum(bytecode),
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 layout{
@@ -13225,7 +13246,15 @@ TEST(DesignBytecode, SpawnRoundTripsReservedPreponedEventHandle) {
       nullptr,
       0,
       0,
-      imageChecksum(bytecode)};
+      imageChecksum(bytecode),
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 layout{
@@ -13280,7 +13309,15 @@ TEST(DesignBytecode, ScheduledSignalWaitUsesDirectSubscriptions) {
       nullptr,
       0,
       65,
-      imageChecksum(bytecode)};
+      imageChecksum(bytecode),
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 layout{
@@ -13479,7 +13516,15 @@ void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
       nullptr,
       0,
       65,
-      imageChecksum(bytecode)};
+      imageChecksum(bytecode),
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 layout{
@@ -14174,7 +14219,15 @@ TEST(DesignBytecode, ScheduledClockOccurrenceRejectsMalformedWaitRecords) {
       nullptr,
       0,
       65,
-      imageChecksum(bytecode)};
+      imageChecksum(bytecode),
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 layout{
@@ -14310,7 +14363,15 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
       nullptr,
       0,
       65,
-      imageChecksum(bytecode)};
+      imageChecksum(bytecode),
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
+      0};
   std::array<uint32_t, 1> continuations{{0}};
   obelisk_rt_frame_layout_v1 bytecodeLayout{
       OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
@@ -14371,7 +14432,10 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
       &nativeLayout,
       mixedTierRequirements,
       mixedTierExecute,
-      mixedTierDestroy};
+      mixedTierDestroy,
+      nullptr,
+      nullptr,
+      nullptr};
   obelisk_rt_process_instance_v1 *native = nullptr;
   ASSERT_EQ(obelisk_rt_v1_process_instance_create(&nativeDescriptor, &native),
             OBELISK_RT_OK);
@@ -16995,6 +17059,8 @@ struct VPIThreadNativeFixture {
                   threadQueryRequirements,
                   threadQueryExecute,
                   threadQueryDestroy,
+                  nullptr,
+                  nullptr,
                   nullptr};
   }
 };

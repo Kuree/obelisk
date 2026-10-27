@@ -179,7 +179,7 @@ struct VPISelectionStep {
   // This selection enters an element of the current managed container.
   // Following offsets are relative to that element's copied value plane.
   bool managedContainer = false;
-  std::shared_ptr<const VPIAssociativeSelection> associativeKey;
+  std::shared_ptr<const VPIAssociativeSelection> associativeKey{};
 };
 
 struct VPIConnectionTarget {
@@ -6239,7 +6239,7 @@ long double logicToReal(const std::vector<uint64_t> &value,
 
 bool packStringValue(std::string_view bytes, std::vector<uint64_t> &value,
                      std::vector<uint64_t> &unknown, uint64_t &width) {
-  if (bytes.size() > UINT64_MAX / 8)
+  if (static_cast<uint64_t>(bytes.size()) > UINT64_MAX / 8)
     return false;
   width = static_cast<uint64_t>(bytes.size()) * 8;
   size_t words = 0;
@@ -8148,7 +8148,7 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
       return {};
     }
     const size_t stride = childElement->value_size * planes;
-    if (contents.size() / stride > INT64_MAX) {
+    if (static_cast<uint64_t>(contents.size() / stride) > INT64_MAX) {
       setError(source->owner, "container snapshot exceeds index capacity",
                vpiSystem);
       return {};
@@ -12788,7 +12788,7 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
     uint32_t type = 0;
     uint8_t parentPrecedence = 0;
     bool parenthesizeEqual = false;
-    std::string token;
+    std::string token{};
   };
   auto *context = handle->owner->context;
   auto invalid = [&] {

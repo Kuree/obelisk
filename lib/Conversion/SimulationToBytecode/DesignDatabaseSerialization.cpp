@@ -409,7 +409,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct ExpressionLeafShapeRecord {
     uint32_t semantic;
     uint16_t kind;
-    StringAttr identifier;
+    StringAttr identifier{};
   };
   SmallVector<ExpressionRootRecord> expressionRoots;
   SmallVector<ExpressionTemplateRecord> expressionTemplates;
@@ -2128,6 +2128,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       case sim::VPIObjectRefKind::Statement:
       case sim::VPIObjectRefKind::Port:
       case sim::VPIObjectRefKind::Symbol:
+      case sim::VPIObjectRefKind::DefinitionMember:
         break;
       }
       bool ref =

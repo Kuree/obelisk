@@ -477,8 +477,8 @@ struct RecursiveExport {
   bool needsOrdering = false;
   obelisk_rt_context *context = nullptr;
   obelisk_rt_gc_lane_v1 *lane = nullptr;
-  RecursiveObjectSet associative;
-  RecursiveObjectSet watchContainers;
+  RecursiveObjectSet associative{};
+  RecursiveObjectSet watchContainers{};
 };
 
 OBELISK_RT_RECURSIVE_BITSTREAM_HELPER bool

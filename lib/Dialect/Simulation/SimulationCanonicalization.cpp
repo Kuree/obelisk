@@ -1553,7 +1553,7 @@ struct TwoStateCompare final : OpRewritePattern<SimLogicCompareOp> {
       return failure();
     // IEEE 1800-2023 11.4.4-6: with no X/Z operands all equality variants
     // compare the same bits. Relational signedness remains explicit.
-    arith::CmpIPredicate predicate;
+    std::optional<arith::CmpIPredicate> predicate;
     switch (op.getKind()) {
     case CompareKind::Eq:
     case CompareKind::CaseEq:
@@ -1591,13 +1591,13 @@ struct TwoStateCompare final : OpRewritePattern<SimLogicCompareOp> {
     case CompareKind::SGE:
       predicate = arith::CmpIPredicate::sge;
       break;
-    default:
-      llvm_unreachable("unknown logic comparison kind");
     }
+    if (!predicate)
+      llvm_unreachable("unknown logic comparison kind");
     Value lhs = materializeBits(*left, op.getLoc(), rewriter);
     Value rhs = materializeBits(*right, op.getLoc(), rewriter);
     auto compare =
-        arith::CmpIOp::create(rewriter, op.getLoc(), predicate, lhs, rhs);
+        arith::CmpIOp::create(rewriter, op.getLoc(), *predicate, lhs, rhs);
     if (isa<IntegerType>(op.getType()))
       replaceWithNewOp(rewriter, op, compare);
     else
@@ -2658,7 +2658,7 @@ struct PromoteLocalArrayView final : OpRewritePattern<View> {
         Value index;
         int64_t ordinal = -1;
         bool unionMember = false;
-        Type packedChild;
+        Type packedChild{};
       };
       SmallVector<Selection> selections;
       for (Operation *view : path) {

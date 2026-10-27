@@ -1524,7 +1524,7 @@ LogicalResult UnitLowering::writeCapturedLValue(
         consume(changed);
         for (auto [index, group] : llvm::enumerate(storagePlan->groups)) {
           std::array<Value, 3> masks{zeroMask, zeroMask, zeroMask};
-          auto add = [&](unsigned bank, unsigned transition) {
+          auto add = [&, &group = group](unsigned bank, unsigned transition) {
             Value selected = arith::AndIOp::create(builder, location,
                                                    group.masks[transition],
                                                    transitions[transition]);
@@ -1788,7 +1788,8 @@ LogicalResult UnitLowering::writeCapturedLValue(
         }
         for (auto [index, group] : llvm::enumerate(maskedPlan->groups)) {
           std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
-          auto addTransition = [&](unsigned bank, unsigned transition) {
+          auto addTransition = [&, &group = group](unsigned bank,
+                                                   unsigned transition) {
             Value selected = arith::AndIOp::create(builder, location,
                                                    group.masks[transition],
                                                    transitionMasks[transition]);
@@ -3236,7 +3237,6 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   Value cycleClock;
   Value cycleCount;
   bool cycleCountSigned = false;
-  bool cycleHasIff = false;
   semantic::EdgeKind cycleEdge = semantic::EdgeKind::Change;
   std::optional<ObserverPlan> cyclePrimaryObserver;
   std::optional<ObserverPlan> cycleConditionObserver;
@@ -3267,7 +3267,6 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     cycleCount = *normalizedCount;
     cycleCountSigned = isSignedNode(cycleChildren.front());
     cycleEdge = eventEdge.getValue();
-    cycleHasIff = hasIff;
     cyclePrimaryObserver = primaryObserver;
     cycleConditionObserver = conditionObserver;
     cycleMatchesOutput = true;
@@ -3317,7 +3316,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     if (failed(designPrecisionFS))
       return failure();
     scaled /= static_cast<long double>(*designPrecisionFS);
-    if (scaled > std::numeric_limits<uint64_t>::max()) {
+    // Use the exactly representable exclusive bound on every host ABI.
+    if (scaled >= 0x1p64L) {
       emitError(location) << "clocking output skew exceeds simulation time";
       return failure();
     }

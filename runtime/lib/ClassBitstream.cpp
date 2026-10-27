@@ -1004,9 +1004,9 @@ struct Request {
   bool collectWatches = false;
   bool overflow = false;
   bool needsOrdering = false;
-  std::unordered_set<obelisk_rt_object_v1 *> active;
-  std::unordered_set<obelisk_rt_object_v1 *> associative;
-  std::unordered_set<uint64_t> watchTokens;
+  std::unordered_set<obelisk_rt_object_v1 *> active{};
+  std::unordered_set<obelisk_rt_object_v1 *> associative{};
+  std::unordered_set<uint64_t> watchTokens{};
 };
 
 OBELISK_RT_FEATURE_HELPER obelisk_rt_status

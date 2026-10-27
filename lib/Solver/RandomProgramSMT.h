@@ -45,7 +45,7 @@ struct SMTVariableDefinition {
   mlir::Value expression;
   uint32_t expressionBegin;
   uint32_t expressionEnd;
-  std::vector<SMTVariable> dependencies;
+  std::vector<SMTVariable> dependencies{};
 };
 
 struct SMTHardConstraint {

@@ -1604,9 +1604,9 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
   struct RootWrite {
     Value destination;
     Value value;
-    std::optional<RootKey> copiedRoot;
+    std::optional<RootKey> copiedRoot{};
     bool copyKnown = false;
-    std::optional<RootKey> root;
+    std::optional<RootKey> root{};
     schedule::ComputeResourceKind resource =
         schedule::ComputeResourceKind::Unknown;
     unsigned function = 0;

@@ -550,7 +550,7 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
     auto observability = declaration.getObservability();
     if (function.getEntryKind() == sim::EntryKind::AlwaysComb &&
         llvm::none_of(access.stores,
-                      [&](auto store) {
+                      [&, &access = access](auto store) {
                         return llvm::is_contained(access.bases,
                                                   store.getReference());
                       }) &&
@@ -567,7 +567,7 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
             written.push_back(range);
         defaultSlot =
             !written.empty() &&
-            llvm::none_of(memory.getLiveIns(), [&](const auto &read) {
+            llvm::none_of(memory.getLiveIns(), [&, &id = id](const auto &read) {
               return read.root == id && llvm::any_of(written, [&](auto write) {
                        return read.low < write.low + write.width &&
                               write.low < read.low + read.width;

@@ -288,6 +288,8 @@ struct NativeDescriptor {
         },
         nativeLifecycle,
         [](obelisk_rt_process_instance_v1 *p) { p->native_handle = nullptr; },
+        nullptr,
+        nullptr,
         nullptr};
   }
   obelisk_rt_process_instance_v1 *create(LifecycleProbe &probe) {

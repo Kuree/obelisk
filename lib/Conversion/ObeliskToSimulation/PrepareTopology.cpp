@@ -775,7 +775,7 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
     aliasWorklist.push_back(entry.getKey().str());
   }
   while (!aliasWorklist.empty()) {
-    std::string formal = std::move(aliasWorklist.pop_back_val());
+    std::string formal = aliasWorklist.pop_back_val();
     auto view = result.refViews.find(formal);
     if (view == result.refViews.end() || !isWholeRefView(view->second))
       continue;
@@ -2124,7 +2124,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     bool localParam = false;
     bool explicitRange = false;
     bool unavailableDefault = false;
-    ArrayAttr originalDefault;
+    ArrayAttr originalDefault{};
   };
   struct DefinitionMemberPlan {
     bool initialized = false;
@@ -2897,9 +2897,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       uint32_t parent;
       uint32_t ordinal;
       uint32_t code = 0;
-      FlatSymbolRefAttr reference;
-      sim::VPITypeSemanticsAttr semantic;
-      sim::FrozenConstantAttr frozen;
+      FlatSymbolRefAttr reference{};
+      sim::VPITypeSemanticsAttr semantic{};
+      sim::FrozenConstantAttr frozen{};
     };
     SmallVector<DefaultNode> nodes;
     SmallVector<DefaultNode> pending{{original, UINT32_MAX, 0}};

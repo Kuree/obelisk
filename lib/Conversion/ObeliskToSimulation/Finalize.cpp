@@ -644,11 +644,11 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
     for (NamedAttribute named : op->getAttrs()) {
       auto [entry, inserted] = attributes.try_emplace(named.getValue());
       if (inserted) {
-        named.getValue().walk([&](Type type) {
+        named.getValue().walk([&, &entry = entry](Type type) {
           if (forbiddenType(type))
             entry->second.forbiddenTypes.push_back(type);
         });
-        named.getValue().walk([&](SymbolRefAttr reference) {
+        named.getValue().walk([&, &entry = entry](SymbolRefAttr reference) {
           entry->second.references.push_back(reference);
         });
       }

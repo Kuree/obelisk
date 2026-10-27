@@ -1429,7 +1429,7 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     int32_t radix = 10;
     uint32_t descriptor = 1;
     size_t skippedArguments = 0;
-    StringRef severity;
+    StringRef severity{};
     bool fatal = false;
     bool stringOutput = false;
   };

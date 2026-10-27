@@ -4509,7 +4509,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
         recordImplicitWrite(high->reference);
         for (auto [groupIndex, group] : llvm::enumerate(plan->groups)) {
           std::array<Value, 3> runtimeMasks{zeroMask, zeroMask, zeroMask};
-          auto add = [&](unsigned bank, unsigned transition) {
+          auto add = [&, &group = group](unsigned bank, unsigned transition) {
             Value selected = arith::AndIOp::create(builder, location,
                                                    group.masks[transition],
                                                    transitions[transition]);

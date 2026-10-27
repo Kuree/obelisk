@@ -135,7 +135,8 @@ private:
       auto [current, label, child] = key;
       uint32_t variable =
           std::min(nodes[current].variable, values.variable(label));
-      auto next = [&](bool one) {
+      auto next = [&, &current = current, &label = label,
+                   &child = child](bool one) {
         Root nextMap = nodes[current].variable == variable
                            ? (one ? nodes[current].one : nodes[current].zero)
                            : current;

@@ -703,7 +703,7 @@ private:
       OpBuilder at(anchor);
       use->set(recompute(
           at, use->get(),
-          [&](Value handle) {
+          [&, &anchor = anchor](Value handle) {
             return !dominance.properlyDominates(handle, anchor);
           },
           recomputed[anchor]));

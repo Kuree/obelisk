@@ -533,7 +533,7 @@ FailureOr<VPIProbeOwner> vpiProbeOwner(Operation *operation) {
   return VPIProbeOwner{function, design, unit, lexicalID};
 }
 
-LogicalResult verifyVPIProbeStatement(Operation *operation, int64_t id,
+LogicalResult verifyVPIProbeStatement(Operation *operation, uint64_t id,
                                       bool requireScope) {
   auto owner = vpiProbeOwner(operation);
   if (failed(owner))
@@ -616,7 +616,7 @@ SimVPIFrameEnterForeignOp::verifySymbolUses(SymbolTableCollection &symbols) {
 }
 
 namespace {
-FailureOr<uint64_t> vpiResolutionTarget(Operation *operation, int64_t id) {
+FailureOr<uint64_t> vpiResolutionTarget(Operation *operation, uint64_t id) {
   auto owner = vpiProbeOwner(operation);
   if (failed(owner))
     return failure();

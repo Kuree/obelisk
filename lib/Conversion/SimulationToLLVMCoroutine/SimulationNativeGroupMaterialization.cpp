@@ -802,7 +802,7 @@ promoteGroupState(LLVM::LLVMFuncOp function,
   struct Window {
     uint64_t offset, end;
     SmallVector<Range *> ranges;
-    llvm::SmallDenseSet<uint32_t, 2> owners;
+    llvm::SmallDenseSet<uint32_t, 2> owners{};
     bool read = false, written = false;
     unsigned stores = 0;
     Block *scope = nullptr;
@@ -1656,7 +1656,7 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
     } else {
       auto [found, inserted] = costs.try_emplace(callee, 0);
       if (inserted)
-        callee.walk([&](Operation *operation) {
+        callee.walk([&, &found = found](Operation *operation) {
           if (operation != callee.getOperation())
             found->second += nativeOperationCost(operation);
         });

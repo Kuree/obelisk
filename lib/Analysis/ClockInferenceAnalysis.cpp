@@ -320,7 +320,8 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
           function.getEntryKind() == sim::EntryKind::RootInitializer ||
           (function.isPrivate() && initialization.contains(function) &&
            !runtime.contains(function));
-      auto range = [&](Value reference) -> std::optional<Writer> {
+      auto range = [&, &provenance = provenance, &function = function](
+                       Value reference) -> std::optional<Writer> {
         auto found = provenance.find(reference);
         if (found == provenance.end())
           return std::nullopt;
@@ -329,7 +330,8 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
           return std::nullopt;
         return Writer{function.getOperation(), r->first, r->second};
       };
-      auto bit = [&](Value reference) -> std::optional<ClockBit> {
+      auto bit = [&, &provenance = provenance](
+                     Value reference) -> std::optional<ClockBit> {
         auto p = provenance.find(reference);
         return p == provenance.end() ? std::nullopt : getBit(p->second);
       };
@@ -350,7 +352,8 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
       unsigned waits = 0;
       DenseMap<Operation *, ClockBit> destinations;
       DenseMap<Operation *, std::pair<uint64_t, uint64_t>> writeRanges;
-      function.walk([&](Operation *op) {
+      function.walk([&, &provenance = provenance,
+                     &function = function](Operation *op) {
         Value destination, value;
         if (auto store = dyn_cast<sim::SimRefStoreOp>(op)) {
           destination = store.getReference();
@@ -457,7 +460,8 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
             if (!range(argument))
               continue;
             bool mayWrite =
-                !summary || llvm::any_of(summary, [&](Attribute attr) {
+                !summary ||
+                llvm::any_of(summary, [&, &index = index](Attribute attr) {
                   auto effect = cast<schedule::ComputeEffectAttr>(attr);
                   return (effect.getEffect() ==
                               schedule::ComputeEffectKind::Write ||
@@ -498,7 +502,7 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
       }
       std::optional<ClockBit> cadence;
       bool uniform = !unsupportedWrite;
-      function.walk([&](Operation *op) {
+      function.walk([&, &function = function](Operation *op) {
         if (sim::isSuspensionOp(op)) {
           auto edge = dyn_cast<sim::SimSuspendEdgeOp>(op);
           auto source = edge ? bit(edge.getWatched()) : std::nullopt;
@@ -582,9 +586,10 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
              : ClockFact{ClockFact::Kind::Unknown});
   }
   for (auto [bit, constant] : initialConstants)
-    if (llvm::none_of(writers[bit.first], [&](const Writer &writer) {
-          return overlaps(bit, writer);
-        })) {
+    if (llvm::none_of(writers[bit.first],
+                      [&, &bit = bit](const Writer &writer) {
+                        return overlaps(bit, writer);
+                      })) {
       modeled.insert(bit);
       join(bit, constant);
     }

@@ -341,7 +341,7 @@ TEST_F(ActivationOracle, InputDependenciesCoverEveryObservedBit) {
     std::set<uint64_t> written;
     for (auto [root, bit] : bits(full.getMemory().getMayWrites()))
       written.insert(root);
-    auto final = [&](const State &state) {
+    auto final = [&, &c = c](const State &state) {
       auto [a, b] = execute(c, state);
       std::vector<unsigned> observed;
       if (written.count(1))

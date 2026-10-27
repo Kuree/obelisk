@@ -471,7 +471,7 @@ private:
     if (auto replicate = dyn_cast<sim::SimLogicReplicateOp>(op)) {
       unsigned width = replicate.getType().getWidth();
       APInt result = APInt::getZero(width);
-      for (int64_t copy = 0; copy < replicate.getCount(); ++copy)
+      for (uint64_t copy = 0; copy < replicate.getCount(); ++copy)
         result |= lhs->zext(width).shl(copy * lhs->getBitWidth());
       return result;
     }

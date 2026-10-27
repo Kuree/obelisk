@@ -221,7 +221,9 @@ FailureOr<uint64_t> parseClockingInputSkew(Operation *op, StringRef delayName,
   // units, which `scaled` has resolved to femtoseconds. Simulation delays are
   // counted in design-precision ticks.
   scaled /= static_cast<long double>(designPrecisionFS);
-  if (scaled > std::numeric_limits<uint64_t>::max())
+  // 2^64 is exactly representable even when long double has only 53 bits of
+  // precision. UINT64_MAX would round up and let an overflowing cast through.
+  if (scaled >= 0x1p64L)
     return emitError(location) << "clocking input skew exceeds simulation time",
            failure();
   return static_cast<uint64_t>(scaled);
@@ -3027,8 +3029,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
       if (sourcePlan) {
         for (auto [operand, attrs] :
              llvm::zip(sourcePlan->values, sourcePlan->valueAttrs)) {
-          auto existing =
-              llvm::find_if(monitorArguments, [&](const auto &entry) {
+          auto existing = llvm::find_if(
+              monitorArguments, [&, &operand = operand](const auto &entry) {
                 return entry.first == operand;
               });
           if (existing != monitorArguments.end()) {
@@ -3208,8 +3210,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     }
     auto appendObserverArguments = [&](ObserverPlan &plan) {
       for (auto [operand, attrs] : llvm::zip(plan.values, plan.valueAttrs)) {
-        auto existing =
-            llvm::find_if(observerArguments, [&](const auto &entry) {
+        auto existing = llvm::find_if(
+            observerArguments, [&, &operand = operand](const auto &entry) {
               return entry.first == operand;
             });
         if (existing != observerArguments.end()) {
@@ -3813,9 +3815,10 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       skewTicks = *parsed;
     }
     for (auto [index, target] : llvm::enumerate(*targets)) {
-      auto clockTarget = llvm::find_if(*clockTargets, [&](auto candidate) {
-        return candidate.first == target.first;
-      });
+      auto clockTarget =
+          llvm::find_if(*clockTargets, [&, &target = target](auto candidate) {
+            return candidate.first == target.first;
+          });
       if (clockTarget == clockTargets->end())
         return emitError(location)
                    << "clocking input source and clock instances do not match",

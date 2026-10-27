@@ -47,7 +47,8 @@ LogicalResult materializeNativePeriodicClockPlan(
         LLVM::LLVMArrayType::get(i64, clock.getCoveragePoints().size());
     makeConstantGlobal(
         module, location, pointsType, coverageSymbols[index],
-        LLVM::Linkage::Internal, 8, [&](OpBuilder &initializer) {
+        LLVM::Linkage::Internal, 8,
+        [&, &clock = clock](OpBuilder &initializer) {
           Value points =
               LLVM::ZeroOp::create(initializer, location, pointsType);
           for (auto [pointIndex, point] :

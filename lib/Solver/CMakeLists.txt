@@ -40,5 +40,7 @@ if(OBELISK_ENABLE_Z3)
   # the latter guarantees the imported archive exists at link time.
   add_dependencies(obj.ObeliskSolver obelisk_z3_project)
   add_dependencies(ObeliskSolver obelisk_z3_project)
+  target_include_directories(obj.ObeliskSolver SYSTEM PRIVATE
+    "$<TARGET_PROPERTY:ObeliskZ3,INTERFACE_INCLUDE_DIRECTORIES>")
   target_link_libraries(ObeliskSolver PRIVATE ObeliskZ3)
 endif()

@@ -390,7 +390,7 @@ DenseSet<Value> LocalStorageAnalysis::getBorrowableLoads(
     return borrowed;
   for (auto [index, operation] : llvm::enumerate(loads)) {
     auto load = operation;
-    if (llvm::all_of(load->getUsers(), [&](Operation *user) {
+    if (llvm::all_of(load->getUsers(), [&, &index = index](Operation *user) {
           // Only direct copy consumers can accept borrowed memory; calls,
           // returns and SSA forwarding need a separate ownership contract.
           if (!isa<sim::SimRefAllocOp, sim::SimRefStoreOp>(user))

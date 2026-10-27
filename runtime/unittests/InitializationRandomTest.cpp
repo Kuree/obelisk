@@ -36,6 +36,8 @@ protected:
                   requirements,
                   execute,
                   destroy,
+                  nullptr,
+                  nullptr,
                   nullptr};
   }
   void TearDown() override { obelisk_rt_v1_context_destroy(context); }

@@ -174,7 +174,7 @@ struct FileEntry {
   int pushback = -1;
   // Original SystemVerilog/VPI pathname. This is populated only when a file
   // is opened, so dormant VPI support adds no scheduler-side work.
-  std::string name;
+  std::string name{};
 };
 
 bool obelisk_rt_file_name_unlocked(obelisk_rt_context *context,
@@ -795,8 +795,8 @@ struct InertialDriverPending {
   std::vector<uint8_t> unknown;
   uint64_t remaining = 0;
   uint64_t secondDestination = UINT64_MAX;
-  std::vector<uint8_t> secondValue;
-  std::vector<uint8_t> secondUnknown;
+  std::vector<uint8_t> secondValue{};
+  std::vector<uint8_t> secondUnknown{};
 };
 
 struct InertialPathPending {
@@ -1635,7 +1635,7 @@ struct NetAliasRange {
   uint64_t width = 0;
   bool fourState = false;
   bool bitwiseDelay = false;
-  std::vector<std::optional<std::array<uint64_t, 3>>> propagationDelays;
+  std::vector<std::optional<std::array<uint64_t, 3>>> propagationDelays{};
 };
 
 struct NetDriverBit {

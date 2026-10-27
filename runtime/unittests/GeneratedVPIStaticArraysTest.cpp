@@ -644,6 +644,14 @@ TEST(GeneratedVPIStaticArrays, DirectIndexedNameInheritsProtectedArraySource) {
       image.bytes.data(),
       image.bytes.size(),
       image.execution.state_bit_count,
+      0,
+      nullptr,
+      0,
+      0,
+      0,
+      nullptr,
+      0,
+      nullptr,
       0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
 

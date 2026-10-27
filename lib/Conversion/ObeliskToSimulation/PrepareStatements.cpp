@@ -31,7 +31,7 @@ struct Shape {
   StringAttr name;
   SmallVector<Child> children;
   bool isScope = false;
-  SmallVector<Attribute> properties;
+  SmallVector<Attribute> properties{};
   Operation *loopAlias = nullptr;
 };
 

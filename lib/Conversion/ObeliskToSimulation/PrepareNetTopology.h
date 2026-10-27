@@ -25,7 +25,7 @@ struct DriverInfo {
   uint64_t drivenLow;
   uint64_t drivenWidth;
   /// For conditional gates, identifies the polarity-specific low/high driver.
-  std::optional<unsigned> strengthBank;
+  std::optional<unsigned> strengthBank{};
   /// Exact primitive output assignment occurrence, independent of net aliasing.
   mlir::Operation *primitiveTerminalSource = nullptr;
 };

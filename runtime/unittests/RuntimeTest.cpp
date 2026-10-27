@@ -132,8 +132,9 @@ bytecodeDescriptor(const std::vector<uint8_t> &code, uint32_t registers) {
   obelisk_rt_fragment_descriptor_v1 descriptor{};
   descriptor.handle = {OBELISK_RT_DESCRIPTOR_FRAGMENT, 0, 7};
   descriptor.code_kind = OBELISK_RT_FRAGMENT_BYTECODE;
-  descriptor.code.bytecode = {code.data(), code.size(), &defaultEntry, 1,
-                              registers,   0,           nullptr};
+  descriptor.code.bytecode = {
+      code.data(), code.size(), &defaultEntry, 1, registers, 0,       nullptr,
+      nullptr,     0,           nullptr,       0, 0,         nullptr, 0};
   return descriptor;
 }
 
@@ -549,10 +550,23 @@ TEST(RuntimeABI, RejectsMalformedActivationInventory) {
   const obelisk_rt_activation_descriptor_v1 activation{
       1, nullptr, OBELISK_RT_ACTIVATION_NO_BYTECODE,
       OBELISK_RT_ACTIVATION_HAS_NATIVE};
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION, 0, 0, nullptr, 0, nullptr, 0, 0, 0, nullptr, 0, 0, 0,
-      &activation,        1,
-  };
+  const obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                                     0,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     &activation,
+                                                     1,
+                                                     nullptr,
+                                                     0};
   obelisk_rt_context *context = nullptr;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
@@ -1128,8 +1142,7 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   };
   obelisk_rt_execution_descriptor_v1 execution{
       OBELISK_RT_VERSION, 0,   0, nullptr, 0, nullptr, 0, 0, 0, scopes,
-      std::size(scopes),  -12, 0,
-  };
+      std::size(scopes),  -12, 0, nullptr, 0, nullptr, 0};
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
@@ -1149,7 +1162,8 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
                             caller,
                             sizeof(caller) - 1,
                             41,
-                            7};
+                            7,
+                            0};
   observation.invokeNested = true;
   ASSERT_EQ(obelisk_rt_v1_context_register_import(context, outerID,
                                                   observeDpiCall, &observation),
@@ -1164,17 +1178,16 @@ TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
       OBELISK_RT_DBREG_BITS, 0, 0, 65, inputValue, nullptr, 2};
   obelisk_rt_import_output_v1 output{OBELISK_RT_DBREG_BITS, 0,       0, 65,
                                      outputValue,           nullptr, 2};
-  obelisk_rt_import_site_v1 site{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_IMPORT_CONTEXT,
-      outerID,
-      0,
-      0,
-      caller,
-      sizeof(caller) - 1,
-      41,
-      3,
-  };
+  obelisk_rt_import_site_v1 site{OBELISK_RT_VERSION,
+                                 OBELISK_RT_IMPORT_CONTEXT,
+                                 outerID,
+                                 0,
+                                 0,
+                                 caller,
+                                 sizeof(caller) - 1,
+                                 41,
+                                 3,
+                                 0};
   EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, &input, 1, &output, 1),
             OBELISK_RT_OK);
   EXPECT_EQ(observation.calls, 2u);
@@ -1223,7 +1236,23 @@ obelisk_rt_status observeNoncontextDpi(obelisk_rt_context *, uint32_t,
 }
 
 TEST(RuntimeDPI, NoncontextBoundaryHasNoActiveCallState) {
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION};
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
@@ -1302,8 +1331,7 @@ TEST(RuntimeDPI, ReportsScopeTimeUnitsAndTime) {
   };
   obelisk_rt_execution_descriptor_v1 execution{
       OBELISK_RT_VERSION, 0,   0, nullptr, 0, nullptr, 0, 0, 0, scopes,
-      std::size(scopes),  -12, 0,
-  };
+      std::size(scopes),  -12, 0, nullptr, 0, nullptr, 0};
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
@@ -1321,6 +1349,7 @@ TEST(RuntimeDPI, ReportsScopeTimeUnitsAndTime) {
                                  0,
                                  0,
                                  nullptr,
+                                 0,
                                  0,
                                  0,
                                  0};
@@ -1384,8 +1413,7 @@ TEST(RuntimeDPI, EnforcesFunctionAndTaskDisableProtocol) {
   };
   obelisk_rt_execution_descriptor_v1 execution{
       OBELISK_RT_VERSION, 0,   0, nullptr, 0, nullptr, 0, 0, 0, scopes,
-      std::size(scopes),  -12, 0,
-  };
+      std::size(scopes),  -12, 0, nullptr, 0, nullptr, 0};
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
@@ -1515,9 +1543,23 @@ TEST(RuntimeDPI, RejectsMalformedScopeMetadata) {
   static constexpr char name[] = "top";
   obelisk_rt_dpi_scope_v1 scope{1,  UINT64_MAX, name, sizeof(name) - 1,
                                 -9, -12,        0};
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION, 0, 0, nullptr, 0, nullptr, 0, 0, 0, &scope, 1, -12, 0,
-  };
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               &scope,
+                                               1,
+                                               -12,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   obelisk_rt_context *context = nullptr;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_INVALID_DESIGN);
@@ -1534,9 +1576,23 @@ TEST(RuntimeDPI, AcceptsPositiveLegalTimeUnitExponents) {
   static constexpr char name[] = "top";
   const obelisk_rt_dpi_scope_v1 scope{0, UINT64_MAX, name, sizeof(name) - 1,
                                       2, -15,        0};
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION, 0, 0, nullptr, 0, nullptr, 0, 0, 0, &scope, 1, -15, 0,
-  };
+  const obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                                     0,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     &scope,
+                                                     1,
+                                                     -15,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     nullptr,
+                                                     0};
   obelisk_rt_context *context = nullptr;
   EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
             OBELISK_RT_OK);
@@ -4595,7 +4651,6 @@ const obelisk_rt_method_descriptor_v1 derivedMethods[]{
     {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, derivedValueMethod, nullptr, 0}};
 const char nodeName[] = "node";
 const char derivedName[] = "derived_node";
-const char throwingName[] = "throwing_node";
 const obelisk_rt_class_descriptor_v1 nodeDescriptor{OBELISK_RT_VERSION,
                                                     0,
                                                     1,
@@ -4609,7 +4664,12 @@ const obelisk_rt_class_descriptor_v1 nodeDescriptor{OBELISK_RT_VERSION,
                                                     std::size(nodeMethods),
                                                     nodeName,
                                                     sizeof(nodeName) - 1,
-                                                    nullptr};
+                                                    nullptr,
+                                                    nullptr,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0};
 const obelisk_rt_random_edge_v1 randomNodeEdge{kNodeLinkOffset,
                                                kNodeValueOffset, UINT64_C(2)};
 constexpr uint64_t kRandomNodeValueOffset = kSlot * 3;
@@ -4640,7 +4700,12 @@ const obelisk_rt_class_descriptor_v1 randomNodeDescriptor{
     std::size(nodeMethods),
     randomNodeName,
     sizeof(randomNodeName) - 1,
-    &randomNodeLayout};
+    &randomNodeLayout,
+    nullptr,
+    0,
+    0,
+    0,
+    0};
 const obelisk_rt_trace_entry_v1 randomDerivedTraceEntries[]{
     {0, 0, 1, OBELISK_RT_TRACE_EMBEDDED, OBELISK_RT_MANAGED_SLOT_INVALID,
      &randomNodeTraceLayout},
@@ -4674,7 +4739,12 @@ const obelisk_rt_class_descriptor_v1 randomDerivedDescriptor{
     std::size(nodeMethods),
     randomDerivedName,
     sizeof(randomDerivedName) - 1,
-    &randomDerivedLayout};
+    &randomDerivedLayout,
+    nullptr,
+    0,
+    0,
+    0,
+    0};
 const obelisk_rt_class_descriptor_v1 derivedDescriptor{
     OBELISK_RT_VERSION,
     OBELISK_RT_CLASS_FINAL,
@@ -4689,22 +4759,12 @@ const obelisk_rt_class_descriptor_v1 derivedDescriptor{
     std::size(derivedMethods),
     derivedName,
     sizeof(derivedName) - 1,
-    nullptr};
-const obelisk_rt_class_descriptor_v1 throwingDescriptor{OBELISK_RT_VERSION,
-                                                        OBELISK_RT_CLASS_FINAL,
-                                                        5,
-                                                        kSlot * 3,
-                                                        kSlotAlign,
-                                                        &nodeDescriptor,
-                                                        nullptr,
-                                                        0,
-                                                        &nodeTraceLayout,
-                                                        nodeMethods,
-                                                        std::size(nodeMethods),
-                                                        throwingName,
-                                                        sizeof(throwingName) -
-                                                            1,
-                                                        nullptr};
+    nullptr,
+    nullptr,
+    0,
+    0,
+    0,
+    0};
 // One handle slot followed by a 128-bit packed payload. Spelling the payload
 // as two more pointers happened to be right at 64 bits and leaves the object
 // too small at 32.
@@ -4724,7 +4784,12 @@ const obelisk_rt_class_descriptor_v1 planeDescriptor{OBELISK_RT_VERSION,
                                                      0,
                                                      planeName,
                                                      sizeof(planeName) - 1,
-                                                     nullptr};
+                                                     nullptr,
+                                                     nullptr,
+                                                     0,
+                                                     0,
+                                                     0,
+                                                     0};
 const obelisk_rt_trace_entry_v1 weakTraceEntry{
     sizeof(obelisk_rt_managed_word_v1), 0,      1, OBELISK_RT_TRACE_WEAK,
     OBELISK_RT_MANAGED_SLOT_CLASS,      nullptr};
@@ -4750,7 +4815,12 @@ const obelisk_rt_class_descriptor_v1 weakDescriptor{
     0,
     weakName,
     sizeof(weakName) - 1,
-    nullptr};
+    nullptr,
+    nullptr,
+    0,
+    0,
+    0,
+    0};
 
 class ManagedHeapTest : public ::testing::Test {
 protected:
@@ -5612,8 +5682,8 @@ TEST_F(ManagedHeapTest, DiscoversActiveRandomObjectGraphByIdentity) {
 TEST_F(ManagedHeapTest,
        ClassAssociativeKeysPreserveIdentityNullAndDerivedObjects) {
   const obelisk_rt_element_type_v1 wordElement{
-      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 91, 0,      0,
-      sizeof(uint64_t),   alignof(uint64_t),       64, nullptr};
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 91, 0,       0,
+      sizeof(uint64_t),   alignof(uint64_t),       64, nullptr, nullptr};
   obelisk_rt_object_v1 *objects[2] = {};
   ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &objects[0]),
             OBELISK_RT_OK);
@@ -5634,7 +5704,7 @@ TEST_F(ManagedHeapTest,
 
   obelisk_rt_object_v1 *expectedKeys[] = {nullptr, objects[0], objects[1]};
   for (uint64_t index = 0; index != std::size(expectedKeys); ++index) {
-    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0, {}, {}, 0};
     key.object = expectedKeys[index];
     uint64_t value = index + 10;
     ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &value, nullptr),
@@ -5644,7 +5714,7 @@ TEST_F(ManagedHeapTest,
   ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &objectRoots), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
   for (uint64_t index = 0; index != std::size(expectedKeys); ++index) {
-    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+    obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0, {}, {}, 0};
     key.object = expectedKeys[index];
     uint64_t value = 0;
     uint32_t present = 0;
@@ -5661,7 +5731,8 @@ TEST_F(ManagedHeapTest,
   obelisk_rt_gc_root_v1 cursorRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &cursorRoot, &cursorOnly),
             OBELISK_RT_OK);
-  obelisk_rt_assoc_key_v1 absentCursor{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+  obelisk_rt_assoc_key_v1 absentCursor{
+      OBELISK_RT_ASSOC_KEY_CLASS, 0, 0, {}, {}, 0};
   absentCursor.object = cursorOnly;
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &cursorRoot), OBELISK_RT_OK);
   uint32_t cursorSuccess = 1;
@@ -5674,7 +5745,8 @@ TEST_F(ManagedHeapTest,
   ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &copy), OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 copyRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
-  obelisk_rt_assoc_key_v1 derivedKey{OBELISK_RT_ASSOC_KEY_CLASS, 0, 0};
+  obelisk_rt_assoc_key_v1 derivedKey{
+      OBELISK_RT_ASSOC_KEY_CLASS, 0, 0, {}, {}, 0};
   derivedKey.object = expectedKeys[2];
   uint64_t value = 0;
   uint32_t present = 0;
@@ -5986,8 +6058,8 @@ TEST_F(ManagedHeapTest, ShallowCopiesContainerPropertiesAsValues) {
   descriptor.class_id = 91;
   descriptor.layout = &layout;
   const obelisk_rt_element_type_v1 word{
-      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 93, 0, 0, sizeof(uint64_t),
-      alignof(uint64_t),  64,                      nullptr};
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 93, 0,       0,
+      sizeof(uint64_t),   alignof(uint64_t),       64, nullptr, nullptr};
 
   obelisk_rt_object_v1 *object = nullptr, *child = nullptr, *array = nullptr,
                        *copy = nullptr;

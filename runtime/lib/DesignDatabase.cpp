@@ -2228,8 +2228,8 @@ bool validateClassCallDispatch(const Database &database) {
     uint64_t id;
     uint32_t flags, base = UINT32_MAX;
     size_t pureMethods = 0;
-    std::vector<uint32_t> parents, children, methods;
-    MethodMap effective, signatures;
+    std::vector<uint32_t> parents{}, children{}, methods{};
+    MethodMap effective{}, signatures{};
   };
   std::vector<Class> classes;
   std::unordered_map<uint64_t, uint32_t> classIndices;

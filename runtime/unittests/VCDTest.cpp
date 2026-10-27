@@ -10,9 +10,12 @@
 #include "gtest/gtest.h"
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -320,6 +323,7 @@ struct Fixture {
   obelisk_rt_execution_descriptor_v1 execution{};
   obelisk_rt_context *context = nullptr;
   std::string path;
+  std::filesystem::path directory;
 
   Fixture() {
     execution.version = OBELISK_RT_VERSION;
@@ -328,13 +332,22 @@ struct Fixture {
     execution.design_database = image.bytes.data();
     execution.design_database_size = image.bytes.size();
     execution.state_bit_count = kStateBits;
-    path = std::string(std::tmpnam(nullptr)) + ".vcd";
+    static std::atomic<uint64_t> sequence{0};
+    auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    do {
+      directory = std::filesystem::temp_directory_path() /
+                  ("obelisk-vcd-" + std::to_string(stamp) + "-" +
+                   std::to_string(sequence.fetch_add(1)));
+    } while (!std::filesystem::create_directory(directory));
+    path = (directory / "dump.vcd").string();
   }
 
   ~Fixture() {
     if (context)
       obelisk_rt_v1_context_destroy(context);
     std::remove(path.c_str());
+    std::error_code error;
+    std::filesystem::remove(directory, error);
   }
 
   obelisk_rt_status create() {

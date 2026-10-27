@@ -125,7 +125,7 @@ bool provenancesAlias(const HandleFact &lhs, const HandleFact &rhs) {
 
 struct ComputeEffect {
   schedule::ComputeEffectKind kind = schedule::ComputeEffectKind::Read;
-  HandleFact target;
+  HandleFact target{};
   schedule::ComputeTriggerKind trigger = schedule::ComputeTriggerKind::None;
   bool deferred = false;
 
@@ -757,7 +757,7 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
       ready.push(static_cast<unsigned>(component));
   }
 
-  unsigned processedComponents = 0;
+  [[maybe_unused]] unsigned processedComponents = 0;
   while (!ready.empty()) {
     unsigned component = ready.top();
     ready.pop();
@@ -1972,7 +1972,8 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
       SmallVector<int64_t> ids(group.begin(), group.end());
       bool cyclic = group.size() > 1;
       if (!cyclic)
-        cyclic = llvm::any_of(groupEdges, [&](schedule::ComputeEdgeAttr edge) {
+        cyclic = llvm::any_of(groupEdges, [&, &group = group](
+                                              schedule::ComputeEdgeAttr edge) {
           return isSchedulingEdge(edge.getKind()) &&
                  edge.getSource() == group.front() &&
                  edge.getTarget() == group.front();

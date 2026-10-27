@@ -653,7 +653,7 @@ UnpackedStructType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   if (layout) {
     auto storage = dyn_cast<StorageLayoutAttr>(layout);
     if (!storage || storage.getStride() ||
-        storage.getOffsets().size() != fields.size())
+        static_cast<size_t>(storage.getOffsets().size()) != fields.size())
       return emitError() << "struct requires a record storage layout";
     uint64_t end = 0;
     for (auto [fieldAttr, offset] :

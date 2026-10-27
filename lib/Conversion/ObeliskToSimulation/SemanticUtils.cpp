@@ -1740,9 +1740,7 @@ static FailureOr<Type> normalizeTypeUncached(Type type, Location location,
                                        array.getRight());
   }
   if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
-    if (array.getSize() == 0 ||
-        array.getSize() >
-            static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+    if (array.getSize() == 0) {
       emitError(location) << "fixed array size is outside the supported range";
       return failure();
     }
@@ -1753,9 +1751,7 @@ static FailureOr<Type> normalizeTypeUncached(Type type, Location location,
     return sim::PackedArrayType::get(context, *element, array.getSize() - 1, 0);
   }
   if (auto array = dyn_cast<semantic::UnpackedArrayType>(type)) {
-    if (array.getSize() == 0 ||
-        array.getSize() >
-            static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+    if (array.getSize() == 0) {
       emitError(location) << "fixed array size is outside the supported range";
       return failure();
     }
@@ -2316,7 +2312,7 @@ simlowering::makeDPIAggregateABI(Type semanticType, Type normalizedType,
         return *cached->second;
       return failure();
     }
-    auto finish = [&](Shape result) -> FailureOr<Shape> {
+    auto finish = [&, &cached = cached](Shape result) -> FailureOr<Shape> {
       cached->second = result;
       return result;
     };
@@ -2358,7 +2354,8 @@ simlowering::makeDPIAggregateABI(Type semanticType, Type normalizedType,
     auto [cached, inserted] = compactWidthCache.try_emplace(type, std::nullopt);
     if (!inserted)
       return cached->second;
-    auto finish = [&](uint64_t result) -> std::optional<uint64_t> {
+    auto finish = [&, &cached =
+                          cached](uint64_t result) -> std::optional<uint64_t> {
       cached->second = result;
       return result;
     };

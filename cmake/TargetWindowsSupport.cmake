@@ -24,7 +24,7 @@ set(_obelisk_windows_runtime_headers
   "${CMAKE_BINARY_DIR}/include/obelisk/Coverage/CoverageFormatDecls.h.inc"
   "${CMAKE_BINARY_DIR}/include/obelisk/Coverage/CoverageFormatParser.h.inc"
   "${CMAKE_BINARY_DIR}/include/obelisk/Coverage/CoverageFormatSerializer.h.inc")
-set(_obelisk_windows_runtime_definitions)
+set(_obelisk_windows_runtime_definitions -D_CRT_SECURE_NO_WARNINGS)
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   list(APPEND _obelisk_windows_runtime_definitions
     -DOBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)

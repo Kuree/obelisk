@@ -165,7 +165,7 @@ void materializeTableProcess(PreparedSuspendableProcess &process) {
     makeConstantGlobal(
         module, location, arrayType,
         prefix + ".watches_" + std::to_string(index), LLVM::Linkage::Internal,
-        8, [&](OpBuilder &builder) {
+        8, [&, &wait = wait](OpBuilder &builder) {
           Value array = LLVM::ZeroOp::create(builder, location, arrayType);
           for (auto [index, watch] : llvm::enumerate(wait.watches)) {
             Value item = LLVM::ZeroOp::create(builder, location, watchType);

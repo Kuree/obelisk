@@ -830,12 +830,11 @@ static bool diagnoseUnsupportedConcurrentFeature(Operation *operation,
             "' currently requires two deterministic one-cycle boolean "
             "operands without locals, match items, disable iff, or nested "
             "property composition");
-      default:
-        return diagnose(Twine("SVA property operator '") +
-                        semantic::stringifySVAssertionBinaryOperator(
-                            binary.getOperatorKind()) +
-                        "' is not executable yet");
       }
+      return diagnose(Twine("SVA property operator '") +
+                      semantic::stringifySVAssertionBinaryOperator(
+                          binary.getOperatorKind()) +
+                      "' is not executable yet");
     }
     if (auto strong = dyn_cast<semantic::SVStrongWeakAssertionExprOp>(current))
       return diagnose(

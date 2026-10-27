@@ -621,7 +621,10 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
   std::vector<bool> physical(width, false), order(width, false);
   for (uint32_t index = 0; index != nodes; ++index) {
     const uint8_t *p = nodeBytes + size_t(index) * samplerPlanNodeSize;
-    auto opcode = static_cast<PlanOpcode>(planRead32(p));
+    uint32_t rawOpcode = planRead32(p);
+    if (rawOpcode > static_cast<uint32_t>(PlanOpcode::Real32From64LastBit))
+      return false;
+    auto opcode = static_cast<PlanOpcode>(rawOpcode);
     uint32_t a = planRead32(p + 4), b = planRead32(p + 8);
     if (planRead32(p + 12))
       return false;
@@ -666,8 +669,6 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
       if (!index || a / 2 >= index || b / 2 >= index)
         return false;
       break;
-    default:
-      return false;
     }
   }
   if (std::find(physical.begin(), physical.end(), false) != physical.end())

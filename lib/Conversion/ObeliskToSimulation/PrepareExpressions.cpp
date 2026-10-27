@@ -200,11 +200,11 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
     Operation *source;
     std::optional<VPIExpressionEndpoint> endpoint;
     uint32_t kind = 0, code = 0;
-    Type type;
-    sim::VPITypeSemanticsAttr semantic;
-    sim::FrozenConstantAttr frozen;
-    StringAttr identifier;
-    SmallVector<unsigned> children;
+    Type type{};
+    sim::VPITypeSemanticsAttr semantic{};
+    sim::FrozenConstantAttr frozen{};
+    StringAttr identifier{};
+    SmallVector<unsigned> children{};
     bool sourceOnly = false;
     bool unqualifiedEvent = false;
   };

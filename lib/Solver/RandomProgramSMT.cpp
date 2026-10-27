@@ -54,11 +54,11 @@ uint64_t read64(const uint8_t *bytes) {
 struct StackValue {
   mlir::Value bits;
   unsigned width;
-  std::optional<SMTVariable> directVariable;
-  std::optional<SMTVariableEquality> directEquality;
+  std::optional<SMTVariable> directVariable{};
+  std::optional<SMTVariableEquality> directEquality{};
   uint32_t instructionBegin = 0;
-  std::optional<SMTVariableDefinition> directDefinition;
-  std::optional<SMTVariableCaptureBound> directCaptureBound;
+  std::optional<SMTVariableDefinition> directDefinition{};
+  std::optional<SMTVariableCaptureBound> directCaptureBound{};
 };
 
 mlir::Value constant(mlir::OpBuilder &builder, mlir::Location location,

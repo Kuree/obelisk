@@ -1066,11 +1066,10 @@ public:
   ImmediateNBAConversion(const TypeConverter &converter, MLIRContext *context,
                          uint64_t stateBitCount,
                          const NativeStaticNBAPlan *staticPlan,
-                         bool staticSitesEnabled, bool guardedClaims,
-                         bool evalCeiling)
+                         bool staticSitesEnabled, bool guardedClaims)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         staticPlan(staticPlan), staticSitesEnabled(staticSitesEnabled),
-        guardedClaims(guardedClaims), evalCeiling(evalCeiling) {}
+        guardedClaims(guardedClaims) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
@@ -1721,7 +1720,6 @@ private:
   const NativeStaticNBAPlan *staticPlan;
   bool staticSitesEnabled;
   bool guardedClaims;
-  bool evalCeiling;
 };
 
 } // namespace
@@ -1795,9 +1793,9 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          stateBitCount, staticPlan, stateLayout,
                                          staticSitesEnabled, guardedClaims,
                                          completePackedSliceNBAs);
-  patterns.add<ImmediateNBAConversion>(
-      converter, patterns.getContext(), stateBitCount, staticPlan,
-      staticSitesEnabled, guardedClaims, evalCeiling);
+  patterns.add<ImmediateNBAConversion>(converter, patterns.getContext(),
+                                       stateBitCount, staticPlan,
+                                       staticSitesEnabled, guardedClaims);
 }
 
 } // namespace obelisk::detail

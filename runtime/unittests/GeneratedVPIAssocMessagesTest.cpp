@@ -47,7 +47,15 @@ TEST(GeneratedDesignDatabase, MailboxAssociativeMessages) {
                                                encoded->designDatabase.data(),
                                                encoded->designDatabase.size(),
                                                encoded->stateBitCount,
-                                               checksum};
+                                               checksum,
+                                               nullptr,
+                                               0,
+                                               0,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
   ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
   obelisk_rt_context *runtime = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
@@ -136,6 +144,7 @@ TEST(GeneratedDesignDatabase, MailboxAssociativeMessages) {
                                              8,
                                              8,
                                              64,
+                                             nullptr,
                                              nullptr};
   for (size_t entry = 0; entry != 3; ++entry) {
     std::array<uint8_t, 17> wide{};

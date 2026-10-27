@@ -51,9 +51,9 @@ struct CombinationalFusionFailure {
   analysis::ActivationRegionAnalysis::FailureReason activation =
       analysis::ActivationRegionAnalysis::FailureReason::None;
   uint64_t storage = 0;
-  mlir::StringAttr owner;
+  mlir::StringAttr owner{};
   /// The operation an activation proof could not summarize, if known.
-  std::optional<mlir::OperationName> unsupported;
+  std::optional<mlir::OperationName> unsupported{};
   /// Format only when emitting a diagnostic; decisions use the enum above.
   std::string getMessage() const;
 };

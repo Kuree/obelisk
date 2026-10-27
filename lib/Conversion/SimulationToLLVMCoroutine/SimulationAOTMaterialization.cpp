@@ -281,7 +281,7 @@ struct DynamicEvalNBAProofAnalysis {
       auto &proof = periodicIngress[record];
       bool sawIngress = false;
       proof.exclusivePeriodicIngress =
-          llvm::all_of(fanouts, [&](size_t fanoutIndex) {
+          llvm::all_of(fanouts, [&, &record = record](size_t fanoutIndex) {
             const auto &fanout = proofContext.fanoutEntries[fanoutIndex];
             uint32_t periodicOwner =
                 fanoutIndex < proofContext.periodicOwnerBits.size() &&
@@ -785,12 +785,14 @@ FailureOr<bool> makeNativeEvalPlan(
           if (sourceIndex != UINT_MAX)
             return false;
           uint64_t end = low + width;
-          return llvm::any_of(resolved->fanoutEntries, [&](const auto &entry) {
-            return entry.static_state == state && entry.low_bit < end &&
-                   low < entry.low_bit + entry.bit_width &&
-                   (entry.reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) !=
-                       0;
-          });
+          return llvm::any_of(
+              resolved->fanoutEntries,
+              [&, &state = state, &low = low](const auto &entry) {
+                return entry.static_state == state && entry.low_bit < end &&
+                       low < entry.low_bit + entry.bit_width &&
+                       (entry.reserved &
+                        OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0;
+              });
         });
     if (unownedTransitionNeedsActiveSelfCheck) {
       if (native::has<native::DebugTiming>(module))
@@ -1062,12 +1064,12 @@ FailureOr<bool> makeNativeEvalPlan(
     uint32_t rootIndex;
     uint64_t site;
     uint64_t width;
-    std::string offsetName;
-    std::string valueName;
-    std::string unknownName;
-    std::string validName;
+    std::string offsetName{};
+    std::string valueName{};
+    std::string unknownName{};
+    std::string validName{};
     bool queued = false;
-    std::optional<uint64_t> constantOffset;
+    std::optional<uint64_t> constantOffset{};
   };
   SmallVector<DynamicEvalNBA> dynamicEvalNBAs;
   llvm::SmallDenseSet<uint32_t, 8> orderedNBARoots;
@@ -2115,7 +2117,8 @@ FailureOr<bool> makeNativeEvalPlan(
                        : llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
         // Load record chunk `index` (bits [64 * index, 64 * index + 64)) of
         // the staged payload. A payload of at most 64 bits is one chunk.
-        auto loadChunk = [&](Value payload, uint64_t index) -> Value {
+        auto loadChunk = [&, &call = call](Value payload,
+                                           uint64_t index) -> Value {
           uint64_t chunkWidth = std::min<uint64_t>(64, *width - index * 64);
           Value address = index == 0
                               ? payload
@@ -2135,7 +2138,7 @@ FailureOr<bool> makeNativeEvalPlan(
         // an unknown plane. ImmediateNBAConversion supplies null only for a
         // genuinely two-state value.
         bool stagedHasUnknown = !arguments[8].getDefiningOp<LLVM::ZeroOp>();
-        auto loadUnknownChunk = [&](uint64_t index) -> Value {
+        auto loadUnknownChunk = [&, &call = call](uint64_t index) -> Value {
           return stagedHasUnknown
                      ? loadChunk(arguments[8], index)
                      : llvmConstant(nbaBuilder, call.getLoc(), i64, 0);
@@ -2449,8 +2452,8 @@ FailureOr<bool> makeNativeEvalPlan(
                       .str();
               entry.validName =
                   (Twine("__obelisk_eval_nba_valid_") + Twine(slotSite)).str();
-              auto makeZero = [&](StringRef name, Type type,
-                                  unsigned alignment) {
+              auto makeZero = [&, &call = call](StringRef name, Type type,
+                                                unsigned alignment) {
                 OpBuilder globalBuilder =
                     OpBuilder::atBlockBegin(module.getBody());
                 auto global = LLVM::GlobalOp::create(
@@ -2474,8 +2477,8 @@ FailureOr<bool> makeNativeEvalPlan(
               dynamicEvalNBAs.push_back(std::move(entry));
               existing = std::prev(dynamicEvalNBAs.end());
             }
-            auto storeGlobal = [&](StringRef name, Value value,
-                                   unsigned alignment) {
+            auto storeGlobal = [&, &call = call](StringRef name, Value value,
+                                                 unsigned alignment) {
               LLVM::StoreOp::create(nbaBuilder, call.getLoc(), value,
                                     LLVM::AddressOfOp::create(nbaBuilder,
                                                               call.getLoc(),
@@ -2506,7 +2509,8 @@ FailureOr<bool> makeNativeEvalPlan(
             // Fixed slots share the canonical barrier's sparse root index.
             // No runtime staging call or event allocation is needed.
             uint32_t word = root->second / 64;
-            auto setBit = [&](StringRef name, uint32_t word, uint64_t mask) {
+            auto setBit = [&, &call = call](StringRef name, uint32_t word,
+                                            uint64_t mask) {
               Value address =
                   byteGEP(nbaBuilder, call.getLoc(),
                           LLVM::AddressOfOp::create(nbaBuilder, call.getLoc(),
@@ -2582,7 +2586,7 @@ FailureOr<bool> makeNativeEvalPlan(
               lowMask);
           Value mask = arith::ShLIOp::create(nbaBuilder, call.getLoc(), lowMask,
                                              safeDestination);
-          auto position = [&](Value source) {
+          auto position = [&, &call = call](Value source) {
             return arith::AndIOp::create(
                 nbaBuilder, call.getLoc(),
                 arith::ShLIOp::create(
@@ -2600,7 +2604,8 @@ FailureOr<bool> makeNativeEvalPlan(
             emitGeneratedNBATransient(nbaBuilder, call.getLoc(), accumulator, 0,
                                       mask, position(staged64),
                                       position(stagedUnknown64));
-          auto mergeField = [&](size_t fieldOffset, Value positioned) {
+          auto mergeField = [&, &call = call](size_t fieldOffset,
+                                              Value positioned) {
             Value address = nbaFieldGEP(nbaBuilder, call.getLoc(), accumulator,
                                         fieldOffset);
             Value previous = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
@@ -2845,7 +2850,7 @@ FailureOr<bool> makeNativeEvalPlan(
       Value dynamicOffset =
           hasOffset ? offsetCall.getArgOperands()[1]
                     : llvmConstant(chainBuilder, call.getLoc(), i64, 0);
-      auto requireValid = [&](Value guard) {
+      auto requireValid = [&, &call = call](Value guard) {
         sourceValid = sourceValid
                           ? arith::AndIOp::create(chainBuilder, call.getLoc(),
                                                   sourceValid, guard)
@@ -3034,7 +3039,7 @@ FailureOr<bool> makeNativeEvalPlan(
           arith::SubIOp::create(loadBuilder, call.getLoc(), requestedStart,
                                 maximumStart),
           zero64);
-      auto resultShift = [&](Value shift) -> Value {
+      auto resultShift = [&, &call = call](Value shift) -> Value {
         if (*width == 64)
           return shift;
         if (*width < 64)
@@ -3272,7 +3277,7 @@ FailureOr<bool> makeNativeEvalPlan(
       Type slotsType = LLVM::LLVMArrayType::get(slotType, entries.size());
       makeConstantGlobal(
           module, location, slotsType, rootSlotNames[root],
-          LLVM::Linkage::Internal, 8, [&](OpBuilder &init) {
+          LLVM::Linkage::Internal, 8, [&, &entries = entries](OpBuilder &init) {
             Value slots = LLVM::ZeroOp::create(init, location, slotsType);
             for (auto [index, entry] : llvm::enumerate(entries)) {
               Value slot = LLVM::ZeroOp::create(init, location, slotType);
@@ -3708,7 +3713,8 @@ FailureOr<bool> makeNativeEvalPlan(
             fanout.kernel >= clockKernels.size())
           continue;
         if (llvm::any_of(
-                periodicAliases, [&](const NativePeriodicAlias &alias) {
+                periodicAliases,
+                [&, &clock = clock](const NativePeriodicAlias &alias) {
                   return alias.getSourceStaticState() ==
                              clock.getStaticState() &&
                          alias.getSourceBitOffset() == clock.getBitOffset() &&
@@ -3967,7 +3973,8 @@ FailureOr<bool> makeNativeEvalPlan(
       auto candidates = directsByWrapper.find(executor);
       if (candidates == directsByWrapper.end())
         continue;
-      auto direct = llvm::find_if(candidates->second, [&](unsigned candidate) {
+      auto direct = llvm::find_if(candidates->second, [&, &index = index](
+                                                          unsigned candidate) {
         return directFragments[candidate].actorSlot ==
                    mergedFragments[index].actor_slot &&
                directFragments[candidate].continuation ==

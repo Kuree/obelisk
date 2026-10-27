@@ -104,14 +104,14 @@ struct KernelSpec {
   schedule::ComputeScheduleKind schedule =
       schedule::ComputeScheduleKind::Acyclic;
   bool loweringReady = false;
-  SmallVector<int64_t> fragments;
+  SmallVector<int64_t> fragments{};
   uint64_t cost = 0;
   uint32_t lane = 0;
   schedule::SchedulerTierKind tier = schedule::SchedulerTierKind::Tier3;
   bool twoStateEligible = true;
-  SmallVector<PhysicalTriggerKey> triggers;
-  SmallVector<RootKey> writes;
-  SmallVector<InductiveRootKey> closureRoots;
+  SmallVector<PhysicalTriggerKey> triggers{};
+  SmallVector<RootKey> writes{};
+  SmallVector<InductiveRootKey> closureRoots{};
 };
 
 bool isExactDescriptorRange(schedule::ComputeEffectAttr effect) {

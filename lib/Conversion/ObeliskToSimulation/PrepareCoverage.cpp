@@ -3609,8 +3609,6 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
           case ir::SVCoverageOptionKind::Strobe:
             optionKind = coverage::FunctionalConfigurationOptionKind::Strobe;
             break;
-          default:
-            break;
           }
           SmallVector<Operation *> children = simlowering::getChildren(option);
           // A definition cannot assign the same owner/scope/option twice.

@@ -481,8 +481,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_prepare_recursive(
       uint64_t ordinal = 0;
       uint64_t childSpan = 0;
       bool childFourState = false;
-      std::vector<uint8_t> childValue;
-      std::vector<uint8_t> childUnknown;
+      std::vector<uint8_t> childValue{};
+      std::vector<uint8_t> childUnknown{};
     };
     std::vector<Frame> stack;
     stack.push_back({0, root});
@@ -828,8 +828,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_finish_recursive(
       uint64_t childSpan = 0;
       bool childFourState = false;
       obelisk_rt_object_v1 *container = nullptr;
-      std::vector<uint8_t> childValue;
-      std::vector<uint8_t> childUnknown;
+      std::vector<uint8_t> childValue{};
+      std::vector<uint8_t> childUnknown{};
     };
     std::vector<Frame> stack;
     stack.push_back({0, root});

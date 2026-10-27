@@ -2447,6 +2447,7 @@ struct CrossWithQueue {
                                      1,
                                      1,
                                      8,
+                                     nullptr,
                                      nullptr};
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   obelisk_rt_object_v1 *queue = nullptr;
@@ -2718,6 +2719,7 @@ TEST_F(CoverageRuntimeDesignTest,
                                      1,
                                      1,
                                      8,
+                                     nullptr,
                                      nullptr};
   obelisk_rt_object_v1 *firstQueue = nullptr;
   obelisk_rt_object_v1 *secondQueue = nullptr;
@@ -3563,8 +3565,16 @@ TEST_F(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
       nullptr};
   const obelisk_rt_trace_layout_v1 trace{
       OBELISK_RT_VERSION, 0, 8, 8, &entry, 1};
-  const obelisk_rt_element_type_v1 element{
-      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_STRING, 99, 0, 0, 8, 8, 0, &trace};
+  const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
+                                           OBELISK_RT_ELEMENT_STRING,
+                                           99,
+                                           0,
+                                           0,
+                                           8,
+                                           8,
+                                           0,
+                                           &trace,
+                                           nullptr};
   obelisk_rt_object_v1 *array = nullptr;
   obelisk_rt_gc_root_v1 arrayRoot{};
   ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
@@ -3663,8 +3673,16 @@ TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage)
   bool entered = false;
   ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
             OBELISK_RT_OK);
-  const obelisk_rt_element_type_v1 element{
-      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 99, 0, 0, 4, 4, 32, nullptr};
+  const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
+                                           OBELISK_RT_ELEMENT_BITS,
+                                           99,
+                                           0,
+                                           0,
+                                           4,
+                                           4,
+                                           32,
+                                           nullptr,
+                                           nullptr};
   obelisk_rt_object_v1 *frozen = nullptr;
   ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &frozen),
             OBELISK_RT_OK);
@@ -4766,7 +4784,7 @@ TEST_F(CoverageRuntimeDesignTest,
   base.class_id = 99;
   base.instance_size = 16;
   base.instance_alignment = 8;
-  obelisk_rt_interface_descriptor_v1 implemented{101, nullptr, 0};
+  obelisk_rt_interface_descriptor_v1 implemented{101, nullptr, 0, nullptr, 0};
   base.interfaces = &implemented;
   base.interface_count = 1;
   auto derived = base;
@@ -4888,7 +4906,8 @@ TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) 
                                            24,
                                            1,
                                            192,
-                                           &trace};
+                                           &trace,
+                                           nullptr};
   const obelisk_rt_element_type_v1 nestedElement{OBELISK_RT_VERSION,
                                                  OBELISK_RT_ELEMENT_BITS,
                                                  100,
@@ -4897,6 +4916,7 @@ TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) 
                                                  4,
                                                  1,
                                                  32,
+                                                 nullptr,
                                                  nullptr};
   obelisk_rt_gc_managed_root_range_v1 recordRoots{};
   ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(lane, &recordRoots,

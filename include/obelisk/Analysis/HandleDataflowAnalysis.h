@@ -55,7 +55,7 @@ struct HandleCertificate {
   /// invalid (IEEE 1800-2023 7.4.6, 11.5.1), so only consumers that also
   /// prove the selectors known may treat the access as valid.
   bool inBoundsIfKnown = false;
-  llvm::SmallVector<mlir::Value, 2> knownSelectors;
+  llvm::SmallVector<mlir::Value, 2> knownSelectors{};
   bool operator==(const HandleCertificate &rhs) const {
     return constantAddress == rhs.constantAddress &&
            laneKnown == rhs.laneKnown && low == rhs.low && width == rhs.width &&

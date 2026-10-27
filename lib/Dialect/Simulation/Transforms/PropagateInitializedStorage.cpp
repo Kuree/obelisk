@@ -37,8 +37,8 @@ struct StorageAccess {
 
 struct StorageCandidate {
   Type type;
-  SmallVector<StorageAccess> writes;
-  SmallVector<StorageAccess> reads;
+  SmallVector<StorageAccess> writes{};
+  SmallVector<StorageAccess> reads{};
   bool invalid = false;
 };
 

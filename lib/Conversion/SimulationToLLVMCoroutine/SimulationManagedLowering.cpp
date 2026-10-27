@@ -364,7 +364,7 @@ public:
     ValueRange input = adaptor.getInput();
     Value object;
     Value selector;
-    uint32_t runtimeKind;
+    std::optional<uint32_t> runtimeKind;
     switch (op.getKind()) {
     case sim::ManagedWatchKind::Field:
       if (input.size() != 2)
@@ -380,11 +380,11 @@ public:
       selector = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), 0);
       runtimeKind = OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE;
       break;
-    default:
-      return rewriter.notifyMatchFailure(op, "unknown managed-watch kind");
     }
-    Value kind =
-        llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), runtimeKind);
+    if (!runtimeKind)
+      return rewriter.notifyMatchFailure(op, "unknown managed-watch kind");
+    Value kind = llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
+                              *runtimeKind);
     rewriter.replaceOp(
         op, LLVM::CallOp::create(
                 rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},

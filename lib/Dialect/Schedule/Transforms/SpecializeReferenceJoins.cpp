@@ -135,10 +135,11 @@ public:
             rewriter.createBlock(block.getParent(), block.getIterator());
         for (Operation &operation : block)
           rewriter.clone(operation, mapping);
-        rewriter.modifyOpInPlace(terminator, [&] {
-          operands.erase(0, operands.size());
-          terminator->setSuccessor(clone, successor);
-        });
+        rewriter.modifyOpInPlace(
+            terminator, [&, &terminator = terminator, &successor = successor] {
+              operands.erase(0, operands.size());
+              terminator->setSuccessor(clone, successor);
+            });
       }
       remaining -= edges.size() * cost;
       rewriter.eraseBlock(&block);

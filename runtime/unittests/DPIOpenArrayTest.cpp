@@ -75,8 +75,8 @@ protected:
 TEST_F(DPIOpenArrayManagedTest,
        RecursiveFinishImportsCanonicalWritesIntoDynamicArray) {
   const obelisk_rt_element_type_v1 elementType{
-      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 91, 0,      0,
-      sizeof(uint8_t),    alignof(uint8_t),        8,  nullptr};
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 91, 0,       0,
+      sizeof(uint8_t),    alignof(uint8_t),        8,  nullptr, nullptr};
   obelisk_rt_object_v1 *array = nullptr;
   ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &elementType, 2, &array),
             OBELISK_RT_OK);
@@ -143,8 +143,8 @@ makeArray(void *data, uint64_t size, const obelisk_rt_dpi_dimension_v1 *ranges,
 TEST(DPIOpenArray, QueriesAndCLayoutPointersPreserveDeclaredRanges) {
   std::array<int32_t, 6> values{10, 11, 12, 20, 21, 22};
   std::array<obelisk_rt_dpi_dimension_v1, 2> ranges{{
-      {2, 1, sizeof(int32_t) * 3},
-      {-1, 1, sizeof(int32_t)},
+      {2, 1, sizeof(int32_t) * 3, 0, 0},
+      {-1, 1, sizeof(int32_t), 0, 0},
   }};
   auto array = makeArray(
       values.data(), sizeof(values), ranges.data(), 2, sizeof(int32_t), 32,
@@ -173,7 +173,7 @@ TEST(DPIOpenArray, QueriesAndCLayoutPointersPreserveDeclaredRanges) {
 
 TEST(DPIOpenArray, PackedBitVectorCopiesAndMasksTail) {
   std::array<svBitVecVal, 4> values{0xffffffffU, 0xffffffffU, 0, 0};
-  obelisk_rt_dpi_dimension_v1 range{4, 5, sizeof(svBitVecVal) * 2};
+  obelisk_rt_dpi_dimension_v1 range{4, 5, sizeof(svBitVecVal) * 2, 0, 0};
   auto array = makeArray(
       values.data(), sizeof(values), &range, 1, sizeof(svBitVecVal) * 2, 33,
       OBELISK_RT_DPI_OPEN_ARRAY_PACKED | OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE, 32,
@@ -196,7 +196,7 @@ TEST(DPIOpenArray, PackedBitVectorCopiesAndMasksTail) {
 
 TEST(DPIOpenArray, FourStateVectorsAndScalarUtilitiesRoundTrip) {
   std::array<svLogicVecVal, 2> vectors{{{0xffffffffU, 0xffffffffU}, {0, 0}}};
-  obelisk_rt_dpi_dimension_v1 range{0, 1, sizeof(svLogicVecVal)};
+  obelisk_rt_dpi_dimension_v1 range{0, 1, sizeof(svLogicVecVal), 0, 0};
   auto logicArray = makeArray(
       vectors.data(), sizeof(vectors), &range, 1, sizeof(svLogicVecVal), 5,
       OBELISK_RT_DPI_OPEN_ARRAY_PACKED | OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE |
@@ -212,7 +212,7 @@ TEST(DPIOpenArray, FourStateVectorsAndScalarUtilitiesRoundTrip) {
   EXPECT_EQ(vectors[1].bval, 0x0cU);
 
   std::array<svLogic, 2> scalars{sv_x, sv_0};
-  obelisk_rt_dpi_dimension_v1 scalarRange{0, 1, sizeof(svLogic)};
+  obelisk_rt_dpi_dimension_v1 scalarRange{0, 1, sizeof(svLogic), 0, 0};
   auto scalarArray = makeArray(scalars.data(), sizeof(scalars), &scalarRange, 1,
                                sizeof(svLogic), 1,
                                OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE |
@@ -238,7 +238,7 @@ TEST(DPIOpenArray, PartSelectGetPreservesUnselectedDestinationBits) {
 
 TEST(DPIOpenArray, ReadOnlyAndNonCLayoutAreEnforced) {
   svBit value = sv_1;
-  obelisk_rt_dpi_dimension_v1 range{0, 0, sizeof(value)};
+  obelisk_rt_dpi_dimension_v1 range{0, 0, sizeof(value), 0, 0};
   auto array = makeArray(&value, sizeof(value), &range, 1, sizeof(value), 1, 0);
   EXPECT_EQ(svGetArrayPtr(&array), nullptr);
   EXPECT_EQ(svSizeOfArray(&array), 0);
