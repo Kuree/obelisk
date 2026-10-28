@@ -3,7 +3,7 @@ import { registerMlir, MLIR_LANGUAGE_ID } from './mlir-language.js';
 import { registerLlvm } from './llvm-language.js';
 import { parseSchedules, renderSchedules } from './schedule-view.js';
 import { CompilerSession } from './compiler-session.js';
-import { loadWaveform, saveWaveform } from './waveform-storage.js';
+import { clearWaveform, loadWaveform, saveWaveform } from './waveform-storage.js';
 import { CoverageView } from './coverage-view.js';
 import { EXAMPLES } from './examples.js';
 import { STAGES, DEFAULT_STAGE, findStage } from './stages.js';
@@ -238,6 +238,7 @@ function compileStage(stageId) {
     return;
   }
   const stage = findStage(stageId);
+  if (stage.kind === 'binary') coverage.clear();
   showConsole();
   busy = true;
   setBusyLabel(true);
@@ -275,10 +276,14 @@ function stop() {
   job?.stop();
 }
 
-function finishRun() {
+function finishRun(refreshResults = false) {
   busy = false;
   job = null;
   setBusyLabel(false);
+  if (refreshResults) {
+    if (activeStage === 'waveform') showWaveform();
+    else if (activeStage === 'coverage') showCoverage();
+  }
 }
 
 function setBusyLabel(isBusy) {
@@ -352,14 +357,14 @@ async function onMessage(message) {
         setStatus('building coverage report', 'busy');
         break;
       }
-      finishRun();
+      finishRun(message.error === undefined);
       break;
 
     case 'coverage':
       noteCoverage(message);
       setStatus(coveragePending.status, coveragePending.kind);
       coveragePending = null;
-      finishRun();
+      finishRun(true);
       break;
 
     case 'failed':
@@ -369,7 +374,7 @@ async function onMessage(message) {
         noteCoverage({ coverageError: message.message });
         setStatus('coverage report failed', 'err');
         coveragePending = null;
-        finishRun();
+        finishRun(true);
         break;
       }
       record(`\n${message.message}\n`, 'stderr');
@@ -385,7 +390,7 @@ async function onMessage(message) {
         noteCoverage({ coverageError: 'stopped before the report was ready' });
         setStatus('coverage report stopped', 'err');
         coveragePending = null;
-        finishRun();
+        finishRun(true);
         break;
       }
       write('\nstopped\n', 'stderr');
@@ -426,8 +431,9 @@ async function finishSimulation(result) {
     return;
   }
   const waveform = files.find((file) => isVcd(file));
+  await storedWaveform;
+  latestWaveform = null;
   if (waveform) {
-    await storedWaveform;
     latestWaveform = { ...waveform, createdAt: Date.now() };
     let saved = true;
     try {
@@ -440,6 +446,12 @@ async function finishSimulation(result) {
       `(${formatBytes(waveform.data.byteLength)})${saved ? ' locally' : ''}\n`,
       'note',
     );
+  } else {
+    try {
+      await clearWaveform();
+    } catch {
+      // The in-memory result is still cleared if browser storage is unavailable.
+    }
   }
   noteCoverage(result);
   record(`\nexited with code ${code}\n`, code === 0 ? 'good' : 'stderr');
@@ -587,6 +599,12 @@ function showCoverage() {
   ui.downloadWaveform.hidden = true;
   ui.coverageView.hidden = false;
   const status = coverage.show(options.coverage === 'on');
+  if (options.coverage === 'on' && busy &&
+      (recording?.stage === 'run' || coveragePending)) {
+    ui.coverageEmpty.textContent = 'Waiting for this run’s coverage report…';
+    setStatus('waiting for coverage', 'busy');
+    return;
+  }
   setStatus(status.text, status.kind);
 }
 

@@ -23,6 +23,14 @@ function stripAnsi(text) {
   return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
+function compilerLog(stream, line) {
+  // Automatic scheduler fallback is an internal optimization decision.
+  const lines = stripAnsi(line).split('\n').filter((text) =>
+    stream !== 'stderr' ||
+    !/^(?:loc\(.*\):\s*)?remark:\s*generated eval disabled:/.test(text));
+  if (lines.length) post('log', { stream, text: lines.join('\n') + '\n' });
+}
+
 function loadDriver() {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
@@ -35,8 +43,8 @@ function loadDriver() {
     const mod = await self.createTalosModule({
       noInitialRun: true,
       thisProgram: '/bin/talos',
-      print: (line) => post('log', { stream: 'stdout', text: stripAnsi(line) + '\n' }),
-      printErr: (line) => post('log', { stream: 'stderr', text: stripAnsi(line) + '\n' }),
+      print: (line) => compilerLog('stdout', line),
+      printErr: (line) => compilerLog('stderr', line),
       locateFile: (path) => new URL(path, self.location.href).href,
     });
     await self.installTalosToolchain(mod);

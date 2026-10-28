@@ -78,7 +78,7 @@ assert.match(app, /ui\.downloadCoverage\.addEventListener\('click',\s*\(\)\s*=>\
 // arrives, and stopping then keeps the finished run and loses only the report.
 assert.match(app, /coverageReport:\s*stage\.kind === 'binary'/);
 assert.match(app, /if \(message\.coveragePending\) \{[\s\S]*?setStatus\('building coverage report', 'busy'\);\s*break;/);
-assert.match(app, /case 'coverage':\s*noteCoverage\(message\);[\s\S]*?finishRun\(\);/);
+assert.match(app, /case 'coverage':\s*noteCoverage\(message\);[\s\S]*?finishRun\(true\);/);
 assert.match(app, /if \(coveragePending\) \{[\s\S]*?noteCoverage\(\{ coverageError: 'stopped before the report was ready' \}\)/);
 assert.match(app, /coverage\.fail\(result\.coverageError\)/);
 assert.match(app, /case 'failed':\s*diagnosticText = '';\s*if \(coveragePending\) \{[\s\S]*?noteCoverage\(\{ coverageError: message\.message \}\)[\s\S]*?coveragePending = null;/);

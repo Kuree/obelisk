@@ -108,11 +108,11 @@ for (const instruction of [
 ]) assert.match(rv32im.source, new RegExp(`\\b${instruction}\\b`));
 assert.match(rv32im.source, /result\s*==\s*1\s*&&\s*memory\[32\]\s*==\s*40/);
 assert.ok(EXAMPLES.some((example) => example.name === 'UART transmitter'));
-const tristate = EXAMPLES.find((example) => example.name === 'Tri-state buffer');
-assert.ok(tristate);
-assert.match(tristate.source, /module\s+tri_state_buffer/);
-assert.equal((tristate.source.match(/tri_state_buffer\s+buffer_/g) ?? []).length, 2);
-const randomization = EXAMPLES.find((example) => example.name === 'Randomization');
+for (const name of [
+  'Streaming FIFO', 'CRC-32 packets', 'Open-drain arbitration',
+  'Switch-level charge', 'Class-based scoreboard', 'Constrained-random packets',
+]) assert.ok(EXAMPLES.some((example) => example.name === name), name);
+const randomization = EXAMPLES.find((example) => example.name === 'Constrained-random packets');
 assert.doesNotMatch(randomization.source, /Packet\s+p\s*=\s*new/);
 
 console.log('web options, stages, persistence, and examples OK');

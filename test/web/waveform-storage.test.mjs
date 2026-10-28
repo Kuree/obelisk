@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 
-import { loadWaveform, saveWaveform } from '../../web/waveform-storage.js';
+import { clearWaveform, loadWaveform, saveWaveform } from '../../web/waveform-storage.js';
 
 const records = new Map();
 let storeCreated = false;
@@ -28,6 +28,10 @@ const database = {
         return {
           put(record, key) {
             records.set(key, record);
+            complete(transaction);
+          },
+          delete(key) {
+            records.delete(key);
             complete(transaction);
           },
           get(key) {
@@ -73,9 +77,13 @@ assert.equal(loaded.createdAt, 1234);
 assert.deepEqual([...loaded.data], [36, 101, 110, 100, 10]);
 assert.equal(storeCreated, true);
 assert.equal(closeCount, 3);
+await clearWaveform();
+assert.equal(await loadWaveform(), null);
+assert.equal(closeCount, 5);
 
 delete globalThis.indexedDB;
 await assert.rejects(loadWaveform(), /IndexedDB is unavailable/);
+await assert.rejects(clearWaveform(), /IndexedDB is unavailable/);
 await assert.rejects(
   saveWaveform({ name: 'x.vcd', data: new Uint8Array() }),
   /IndexedDB is unavailable/,

@@ -313,6 +313,23 @@ assert.deepEqual(messages.at(-1), {
   text: 'work/design.sv:11:12: warning\n',
 });
 
+const beforeRemark = messages.length;
+factoryOptions.printErr('loc("work/design.sv":8:8): remark: generated eval disabled: unguarded runtime leaf');
+factoryOptions.printErr('\x1b[36mloc("work/design.sv":8:8)\x1b[0m: remark: generated eval disabled: unguarded runtime leaf');
+assert.equal(messages.length, beforeRemark);
+factoryOptions.print('remark: generated eval disabled: literal stdout');
+assert.equal(messages.at(-1).text, 'remark: generated eval disabled: literal stdout\n');
+for (const line of [
+  'loc("work/design.sv":8:8): warning: unresolved switch control',
+  'loc("work/design.sv":8:8): error: generated eval disabled: forced eval is unavailable',
+  'loc("work/design.sv":8:8): remark: another optimization decision',
+]) {
+  factoryOptions.printErr(line);
+  assert.equal(messages.at(-1).text, line + '\n');
+}
+factoryOptions.printErr('loc("work/design.sv":8:8): remark: generated eval disabled: fallback\nwork/design.sv:9:1: error: invalid design');
+assert.equal(messages.at(-1).text, 'work/design.sv:9:1: error: invalid design\n');
+
 // A second preload reuses the loaded driver.
 await self.onmessage({ data: { type: 'preload' } });
 assert.equal(factoryCalls, 1);

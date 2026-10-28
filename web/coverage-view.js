@@ -44,14 +44,18 @@ export class CoverageView {
   }
 
   /**
-   * A run with coverage produced no report: drop the previous one, which no
-   * longer describes the latest run, and say why instead.
+   * Drop the previous run's report and release its URL.
    */
-  fail(reason) {
+  clear() {
     this.#report = null;
-    this.#failure = reason;
+    this.#failure = null;
     if (this.#shown) this.#urls.revokeObjectURL(this.#shown.href);
     this.#shown = null;
+  }
+
+  fail(reason) {
+    this.clear();
+    this.#failure = reason;
   }
 
   /**

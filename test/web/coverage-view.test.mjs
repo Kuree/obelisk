@@ -86,4 +86,16 @@ view.update(page({ line: metric(70) }));
 assert.deepEqual(view.show(true), { text: 'line 70.0%', kind: 'ok' });
 assert.equal(frame.src, 'blob:4');
 
+// Starting another run clears the old report even when coverage is off.
+view.clear();
+assert.deepEqual(view.show(false), { text: 'no coverage', kind: '' });
+assert.deepEqual([frame.hidden, empty.hidden, download.hidden], [true, false, true]);
+assert.equal(revoked.at(-1), 'blob:4');
+view.show(true);
+assert.equal(empty.textContent, 'No coverage yet. Run the design to collect it.');
+view.save({ createElement: () => assert.fail('old report must not be downloadable') });
+view.update(page({ functional: metric(100) }));
+assert.deepEqual(view.show(true), { text: 'functional 100.0%', kind: 'ok' });
+assert.equal(frame.src, 'blob:5');
+
 console.log('web coverage view OK');

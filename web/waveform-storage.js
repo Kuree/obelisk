@@ -66,3 +66,15 @@ export async function loadWaveform() {
     database.close();
   }
 }
+
+export async function clearWaveform() {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(STORE, 'readwrite');
+    const done = transactionDone(transaction);
+    transaction.objectStore(STORE).delete(LATEST);
+    await done;
+  } finally {
+    database.close();
+  }
+}
