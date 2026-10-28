@@ -1,6 +1,5 @@
 """Sphinx configuration for the generated Talos reference."""
 
-from pathlib import Path
 import os
 
 project = "talos"
@@ -12,8 +11,6 @@ myst_heading_anchors = 4
 
 html_theme = "furo"
 html_title = "talos"
-html_logo = str(Path(__file__).parent.parent / "web/talos.svg")
-html_favicon = html_logo
 html_show_sourcelink = False
 html_copy_source = False
 html_show_copyright = False

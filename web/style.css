@@ -1,6 +1,7 @@
 /* Talos playground — Dracula.
  *
- * Official Dracula values throughout. The accent hues are assigned by meaning
+ * Dracula backgrounds and accents, with brighter secondary text for contrast.
+ * The accent hues are assigned by meaning
  * rather than decoration, so they carry the four-state logic vocabulary this
  * subject already speaks: purple for the driven signal, red for x, cyan for z,
  * green for settled. */
@@ -16,7 +17,7 @@
 
   --fg:       #f8f8f2;  /* foreground */
   --fg-mid:   #b9bcce;
-  --fg-dim:   #6272a4;  /* comment */
+  --fg-dim:   #b9bcce;
 
   --signal:   #bd93f9;  /* purple — logic 1, primary accent */
   --unknown:  #ff5555;  /* red    — logic x */
@@ -63,15 +64,6 @@ button, select, input { font: inherit; color: inherit; }
   padding: 0 16px;
   border-bottom: 1px solid var(--rule);
   background: var(--panel);
-}
-
-.identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
-
-.glyph {
-  width: 24px;
-  height: 24px;
-  display: block;
-  flex: none;
 }
 
 .masthead h1 {
@@ -130,7 +122,6 @@ button, select, input { font: inherit; color: inherit; }
 .run:disabled { opacity: .4; cursor: not-allowed; }
 .run kbd {
   font: 400 11px/1 var(--mono);
-  opacity: .65;
   border: 1px solid currentColor;
   border-radius: 3px;
   padding: 2px 4px;
@@ -192,7 +183,7 @@ button, select, input { font: inherit; color: inherit; }
 
 .stage .ord {
   font: 400 10.5px/1 var(--mono);
-  color: var(--rule-lit);
+  color: var(--fg-dim);
   transition: color .12s;
 }
 .stage:hover .ord { color: var(--fg-dim); }
@@ -243,7 +234,7 @@ button, select, input { font: inherit; color: inherit; }
   min-width: 0;
 }
 .field input { font-family: var(--mono); font-size: 12.5px; }
-.field input::placeholder { color: var(--fg-dim); opacity: .65; }
+.field input::placeholder { color: var(--fg-dim); opacity: 1; }
 .field select:hover, .field input:hover { border-color: var(--rule-lit); }
 
 .commandline {
@@ -320,7 +311,7 @@ button, select, input { font: inherit; color: inherit; }
 .inline {
   background: transparent;
   border: 0;
-  color: var(--fg-dim);
+  color: var(--fg);
   font-size: 12px;
   cursor: pointer;
 }
@@ -355,7 +346,7 @@ button, select, input { font: inherit; color: inherit; }
 
 #editor { flex: 1; min-height: 0; }
 .monaco-editor .scheduleSourceLine {
-  background: #bd93f959;
+  background: #bd93f91f;
   box-shadow: inset 3px 0 #bd93f9;
 }
 .monaco-editor .scheduleSourceLineMarker {
@@ -434,7 +425,7 @@ button, select, input { font: inherit; color: inherit; }
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-.emptyRegion { fill: var(--rule-lit); font-size: 11px; font-style: italic; }
+.emptyRegion { fill: var(--fg-dim); font-size: 11px; font-style: italic; }
 .scheduleGroup > rect {
   fill: none;
   stroke: var(--rule);
@@ -457,7 +448,7 @@ button, select, input { font: inherit; color: inherit; }
 .scheduleNode.tier-bytecode > rect { stroke: var(--warm); }
 .scheduleNode.tier-generated > rect { stroke: var(--hiz); }
 .scheduleNode:focus > rect,
-.scheduleNode:hover > rect { fill: #3b3e4d; stroke-width: 2; }
+.scheduleNode:hover > rect { fill: #383a49; stroke-width: 2; }
 .nodeTitle { fill: var(--fg); font-size: 10.5px; font-weight: 500; }
 .nodeDetail { fill: var(--fg-dim); font-size: 8.5px; }
 .nodeLocation { fill: var(--accent-2); font-size: 8.5px; }
@@ -602,8 +593,6 @@ button, select, input { font: inherit; color: inherit; }
   scrollbar-width: thin;
 }
 
-/* Prose the reader acts on, so it takes the readable secondary ink rather
-   than the comment purple used for labels. */
 .embedNote {
   margin: 12px 16px 0;
   font-size: 13px;

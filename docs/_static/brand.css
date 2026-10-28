@@ -1,8 +1,10 @@
-.sidebar-brand {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.65rem;
-}
-.sidebar-logo-container { margin: 0; }
-.sidebar-logo { width: 2rem; height: 2rem; }
 .sidebar-brand-text { font-size: 1.35rem; }
+
+/* TableGen's raw HTML tables do not get Sphinx's scrolling table wrapper. */
+article table:not(.docutils) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}

@@ -8,6 +8,8 @@
 /.ccache/
 /web/talos.js
 /web/talos.wasm
+/web/talos-cov.js
+/web/talos-cov.wasm
 /web/toolchain/
 *.vcd
 *.o

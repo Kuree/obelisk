@@ -1,6 +1,7 @@
-// Both sites live in a private R2 bucket. Deployments select a complete release
-// after all objects have uploaded; cache keys include that release as well.
+// The landing page shares the playground's uploaded static assets. All sites
+// use a complete R2 release; cache keys include the release and public origin.
 const sites = new Map([
+  ['talos-sv.org', 'playground'],
   ['docs.talos-sv.org', 'docs'],
   ['playground.talos-sv.org', 'playground'],
 ]);
@@ -69,7 +70,11 @@ export default {
       url.pathname += '/';
       return new Response(null, { status: 308, headers: { Location: url.href } });
     }
-    if (!path || path.endsWith('/')) path += 'index.html';
+    if (url.hostname === 'talos-sv.org' && (!path || path === 'index.html')) {
+      path = 'landing.html';
+    } else if (!path || path.endsWith('/')) {
+      path += 'index.html';
+    }
 
     // Ignore query strings in the internal cache. Each Worker deployment has
     // its own object namespace, so a new release never serves an old asset.

@@ -60,6 +60,29 @@ test('hosts select separate R2 prefixes and serve directory indexes', async () =
   assert.equal((await site.fetch('/missing')).status, 404);
 });
 
+test('apex serves the landing page and shared assets while the playground keeps its index', async () => {
+  const site = fixture();
+  site.add('playground', 'landing.html', 'landing');
+  site.add('playground', 'index.html', 'compiler');
+  site.add('playground', 'landing.css', 'styles', { type: 'text/css' });
+  site.add('playground', 'diagram.svg', '<svg/>', { type: 'image/svg+xml' });
+  for (const path of ['/', '/?campaign=docs', '/index.html']) {
+    const response = await site.fetch(path, {}, 'talos-sv.org');
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'landing');
+  }
+  assert.equal(await (await site.fetch('/', {}, 'playground.talos-sv.org')).text(), 'compiler');
+  assert.equal(await (await site.fetch('/index.html', {}, 'playground.talos-sv.org')).text(), 'compiler');
+  const style = await site.fetch('/landing.css', {}, 'talos-sv.org');
+  assert.equal(style.headers.get('Content-Type'), 'text/css');
+  assert.equal(await style.text(), 'styles');
+  assert.equal(await (await site.fetch('/diagram.svg', {}, 'talos-sv.org')).text(), '<svg/>');
+  const head = await site.fetch('/', { method: 'HEAD' }, 'talos-sv.org');
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal((await site.fetch('/missing', {}, 'talos-sv.org')).status, 404);
+});
+
 test('large WASM objects stream with the correct MIME and size', async () => {
   const site = fixture();
   site.add('playground', 'talos.wasm', 'wasm', { type: 'application/octet-stream', size: 61119731 });
@@ -131,10 +154,10 @@ test('reject unknown hosts, writes, unconfigured releases, and unsafe paths', as
   assert.equal(site.calls.length, 0);
 });
 
-test('Wrangler binds the private sites bucket and both custom domains', async () => {
+test('Wrangler binds the private sites bucket and all three custom domains', async () => {
   const config = JSON.parse(await readFile(new URL('../../utils/cloudflare/wrangler.json', import.meta.url)));
   assert.equal(config.workers_dev, false);
   assert.deepEqual(config.r2_buckets, [{ binding: 'SITES', bucket_name: 'talos-sites' }]);
-  assert.deepEqual(config.routes.map((route) => route.pattern).sort(), ['docs.talos-sv.org', 'playground.talos-sv.org']);
+  assert.deepEqual(config.routes.map((route) => route.pattern).sort(), ['docs.talos-sv.org', 'playground.talos-sv.org', 'talos-sv.org']);
   assert.ok(config.routes.every((route) => route.custom_domain === true));
 });

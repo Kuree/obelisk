@@ -19,7 +19,7 @@ for (const match of app.matchAll(/from\s+'(\.\/[^']+)'/g)) {
   await access(new URL(match[1], web));
 }
 assert.match(html, /<script\s+type="module"\s+src="\.\/app\.js"><\/script>/);
-assert.match(html, /<title>Talos: SystemVerilog simulator in the browser<\/title>/);
+assert.match(html, /<title>talos: SystemVerilog simulator in the browser<\/title>/);
 assert.doesNotMatch(html, /<title>[^<]*—[^<]*<\/title>/);
 assert.match(html, /<option\s+value="">Custom design<\/option>/);
 assert.match(html, /<iframe[^>]+id="surfer"[^>]+sandbox="allow-scripts"/s);
@@ -89,7 +89,7 @@ assert.match(app, /onSourceDeselected:\s*\(\)\s*=>\s*scheduleSourceHighlight\?\.
 assert.match(app, /editor\.setPosition\(\{[\s\S]*lineNumber:[\s\S]*column:/);
 assert.match(app, /createDecorationsCollection\(\)/);
 assert.match(app, /isWholeLine:\s*true[\s\S]*className:\s*'scheduleSourceLine'/);
-assert.match(style, /\.scheduleSourceLine\s*{[^}]*background:\s*#bd93f959/s);
+assert.match(style, /\.scheduleSourceLine\s*{[^}]*background:\s*#bd93f91f/s);
 assert.match(app, /stackedMedia\.addEventListener\('change',\s*syncOrientation\)/);
 assert.match(app, /if\s*\(stacked\(\)\)\s*ui\.workbench\.style\.gridTemplateColumns\s*=\s*''/);
 assert.match(app, /ui\.handle\.setAttribute\('aria-orientation',\s*stacked\(\)\s*\?\s*'horizontal'\s*:\s*'vertical'\)/);

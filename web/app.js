@@ -661,6 +661,7 @@ async function initEditor(initialSource) {
 
   // Dracula, following the official palette's part of speech: pink keywords,
   // cyan italic types, green functions, purple numbers, yellow strings.
+  // Comments and line numbers use brighter secondary ink for text contrast.
   monaco.editor.defineTheme('talos-dracula', {
     base: 'vs-dark',
     inherit: true,
@@ -669,7 +670,7 @@ async function initEditor(initialSource) {
       { token: 'type', foreground: '8be9fd', fontStyle: 'italic' },
       { token: 'predefined', foreground: '50fa7b' },
       { token: 'keyword.directive', foreground: 'ff79c6' },
-      { token: 'comment', foreground: '6272a4', fontStyle: 'italic' },
+      { token: 'comment', foreground: 'b9bcce', fontStyle: 'italic' },
       { token: 'number', foreground: 'bd93f9' },
       { token: 'number.hex', foreground: 'bd93f9' },
       { token: 'number.binary', foreground: 'bd93f9' },
@@ -688,10 +689,18 @@ async function initEditor(initialSource) {
     colors: {
       'editor.background': '#282a36',
       'editor.foreground': '#f8f8f2',
-      'editorLineNumber.foreground': '#6272a4',
+      'editorLineNumber.foreground': '#b9bcce',
+      'editorLineNumber.dimmedForeground': '#b9bcce',
       'editorLineNumber.activeForeground': '#f8f8f2',
       'editor.lineHighlightBackground': '#44475a45',
-      'editor.selectionBackground': '#44475a',
+      'editor.selectionBackground': '#383a49',
+      'editor.inactiveSelectionBackground': '#383a49',
+      'editorBracketHighlight.foreground1': '#f1fa8c',
+      'editorBracketHighlight.foreground2': '#bd93f9',
+      'editorBracketHighlight.foreground3': '#8be9fd',
+      'editorBracketHighlight.foreground4': '#ff79c6',
+      'editorBracketHighlight.foreground5': '#50fa7b',
+      'editorBracketHighlight.foreground6': '#ffb86c',
       'editorCursor.foreground': '#f8f8f2',
       'editorIndentGuide.background1': '#3b3d4c',
       'editorWidget.background': '#21222c',

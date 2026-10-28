@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#282a36">
+  <meta name="description" content="Talos, a fast RTL simulator. Follow SystemVerilog through the event scheduler, then open the playground.">
+  <title>talos: a fast RTL simulator</title>
+  <link rel="canonical" href="https://talos-sv.org/">
+  <link rel="stylesheet" href="./landing.css">
+</head>
+<body>
+  <input class="motion-input" id="motion-toggle" type="checkbox">
+  <div class="landing">
+    <header class="site-header">
+      <h1 class="brand">talos</h1>
+      <p class="subtitle">a fast RTL simulator</p>
+    </header>
+
+    <main>
+      <figure class="simulation-frame" data-clock-cycles="4" aria-labelledby="simulation-caption">
+        <div class="diagram-grid">
+          <section class="source-panel" aria-label="Example SystemVerilog source">
+            <div class="panel-heading">
+              <span class="filename"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" aria-hidden="true"><path d="M3 1h5l3 3v11H3zM8 1v4h3M5 8h4M5 11h4" stroke="currentColor" stroke-linejoin="round"/></svg>counter.sv</span>
+            </div>
+            <svg class="source-diagram" viewBox="0 0 540 480" role="img" aria-labelledby="code-title code-desc">
+              <title id="code-title">A counter with zero-delay scheduling, an assertion, and a strobe</title>
+              <desc id="code-desc">The clock toggles every 5 ns. On a positive edge, count is updated by a nonblocking assignment. A zero delay schedules a continuation through Inactive, which resumes in Active and sets seen. An always_comb process updates even after NBA commits count. A concurrent assertion samples count and even in Preponed, evaluates in Observed, and prints its pass action in Reactive. The strobe prints the final count in Postponed.</desc>
+              <g class="code-highlight loop" aria-hidden="true">
+                <rect class="highlight-fill" x="13" y="15" width="514" height="23" rx="3"/>
+                <rect class="highlight-edge" x="13" y="15" width="3" height="23" rx="1"/>
+                <path class="highlight-arrow" d="m28 23 4 4-4 4" fill="none" stroke-width="1.5"/>
+              </g>
+              <g class="line-numbers" text-anchor="end" aria-hidden="true">
+                <text x="45" y="30">1</text>
+                <text x="45" y="50">2</text>
+                <text x="45" y="70">3</text>
+                <text x="45" y="90">4</text>
+                <text x="45" y="110">5</text>
+                <text x="45" y="130">6</text>
+                <text x="45" y="150">7</text>
+                <text x="45" y="170">8</text>
+                <text x="45" y="190">9</text>
+                <text x="45" y="210">10</text>
+                <text x="45" y="230">11</text>
+                <text x="45" y="250">12</text>
+                <text x="45" y="270">13</text>
+                <text x="45" y="290">14</text>
+                <text x="45" y="310">15</text>
+                <text x="45" y="330">16</text>
+                <text x="45" y="350">17</text>
+                <text x="45" y="370">18</text>
+                <text x="45" y="390">19</text>
+                <text x="45" y="410">20</text>
+                <text x="45" y="430">21</text>
+                <text x="45" y="450">22</text>
+              </g>
+              <g class="code">
+                <text x="65" y="30"><tspan class="keyword">module</tspan> counter;</text>
+                <text x="83" y="50"><tspan class="keyword">timeunit</tspan> <tspan class="literal">1ns</tspan>;</text>
+                <text x="83" y="70"><tspan class="keyword">timeprecision</tspan> <tspan class="literal">1ps</tspan>;</text>
+                <text x="83" y="110"><tspan class="type">bit</tspan> clk = <tspan class="literal">0</tspan>, seen = <tspan class="literal">0</tspan>;</text>
+                <text x="83" y="130"><tspan class="type">logic</tspan> [<tspan class="literal">3</tspan>:<tspan class="literal">0</tspan>] count = <tspan class="literal">0</tspan>;</text>
+                <text x="83" y="150"><tspan class="type">logic</tspan> even;</text>
+                <text x="83" y="190"><tspan class="keyword">always</tspan> #<tspan class="literal">5</tspan> clk = <tspan class="operator">~</tspan>clk;</text>
+                <text x="83" y="230"><tspan class="keyword">always</tspan> @(<tspan class="keyword">posedge</tspan> clk) <tspan class="keyword">begin</tspan></text>
+                <text x="101" y="250">count <tspan class="operator">&lt;=</tspan> count + <tspan class="literal">1</tspan>;</text>
+                <text x="101" y="270">#<tspan class="literal">0</tspan> seen = clk;</text>
+                <text x="101" y="290"><tspan class="system">$strobe</tspan>(<tspan class="string">&quot;count=%0d&quot;</tspan>, count);</text>
+                <text x="83" y="310"><tspan class="keyword">end</tspan></text>
+                <text x="83" y="350"><tspan class="keyword">always_comb</tspan></text>
+                <text x="101" y="370">even = <tspan class="operator">~</tspan>count[<tspan class="literal">0</tspan>];</text>
+                <text x="83" y="410"><tspan class="keyword">assert</tspan> <tspan class="keyword">property</tspan> (@(<tspan class="keyword">posedge</tspan> clk) even == <tspan class="operator">~</tspan>count[<tspan class="literal">0</tspan>])</text>
+                <text x="101" y="430"><tspan class="system">$display</tspan>(<tspan class="string">&quot;ok&quot;</tspan>);</text>
+                <text x="65" y="450"><tspan class="keyword">endmodule</tspan></text>
+              </g>
+            </svg>
+          </section>
+
+          <section class="queue-panel" aria-label="Compact SystemVerilog event scheduler">
+            <div class="panel-heading">
+              <span class="queue-title">EVENT SCHEDULER</span>
+            </div>
+            <svg class="queue-diagram" viewBox="0 0 560 500" role="img" aria-labelledby="queue-title queue-desc">
+              <title id="queue-title">A compact visualization of SystemVerilog event scheduling</title>
+              <desc id="queue-desc">An original visualization of the scheduling rules in IEEE 1800 section 4.4. Seven exercised regions are shown. Ellipses omit PLI callbacks and unused reactive regions, with their names in tooltips. Across four clock cycles, count advances from zero to four and even alternates. At 5 ns, Preponed samples count as zero and even as one. Active raises the clock and queues count in NBA. A zero delay places the continuation in Inactive; it resumes in Active and sets seen. NBA commits count as one, and Active recomputes even. Observed checks the sampled even/count invariant, Reactive prints ok, and Postponed prints count equals one. Highlighted outgoing and incoming arrows mark advancement to 10 ns, where the clock falls. The same sequence repeats at 15, 25, and 35 ns; the illustrative trace resets after 40 ns.</desc>
+              <!-- Original compact diagram of the functional scheduling rules
+                   in IEEE 1800 §4.4–4.5. No IEEE figure artwork is embedded.
+                   Ellipses retain the order of the unexercised regions. -->
+              <defs>
+                <marker id="arrow-muted" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1 6 4 1 7" fill="#6272a4"/></marker>
+                <marker id="arrow-nba" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1 6 4 1 7" fill="#8be9fd"/></marker>
+                <marker id="arrow-inactive" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1 6 4 1 7" fill="#ffb86c"/></marker>
+                <marker id="arrow-transition" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1 6 4 1 7" fill="#f1fa8c"/></marker>
+              </defs>
+              <text class="svg-label" x="24" y="28">SIMULATION TIME</text>
+              <g class="time-value" text-anchor="end">
+                <text class="phase time-0" x="535" y="30">0<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-5" x="535" y="30">5<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-10" x="535" y="30">10<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-15" x="535" y="30">15<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-20" x="535" y="30">20<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-25" x="535" y="30">25<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-30" x="535" y="30">30<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-35" x="535" y="30">35<tspan class="time-unit"> ns</tspan></text>
+                <text class="phase time-40" x="535" y="30">40<tspan class="time-unit"> ns</tspan></text>
+              </g>
+              <path class="slot-boundary" d="M148 49v400M380 49v400"/>
+              <g class="flow-connectors" marker-end="url(#arrow-muted)">
+                <path d="M25 82h169M340 423h195"/>
+                <path d="M267 94v31M267 149v26M267 199v35M267 258v35M267 317v35M267 376v35"/>
+                <path d="M194 137h-34M194 187h-34M194 246h-34"/>
+                <path d="M194 364h-34M252 393h-92"/>
+                <path d="M340 305h25M282 334h83M282 393h83"/>
+              </g>
+              <g class="slot-label"><text x="25" y="58">previous</text><text x="25" y="71">time slot</text><text x="450" y="396">next</text><text x="450" y="409">time slot</text></g>
+              <g class="slot-highlight phase previous-transition">
+                <text x="25" y="58">previous</text><text x="25" y="71">time slot</text>
+                <path d="M25 82h169" marker-end="url(#arrow-transition)"/>
+              </g>
+              <g class="slot-highlight phase next-transition">
+                <text x="450" y="396">next</text><text x="450" y="409">time slot</text>
+                <path d="M340 423h195" marker-end="url(#arrow-transition)"/>
+              </g>
+              <g class="region-node" data-region="Preponed"><rect x="194" y="70" width="146" height="24" rx="6"/><text x="267" y="86">Preponed</text></g>
+              <rect class="region-overlay phase region-preponed" x="194" y="70" width="146" height="24" rx="6"/>
+              <g class="region-node" data-region="Active"><rect x="194" y="125" width="146" height="24" rx="6"/><text x="267" y="141">Active</text></g>
+              <rect class="region-overlay phase region-active" x="194" y="125" width="146" height="24" rx="6"/>
+              <g class="region-node" data-region="Inactive"><rect x="194" y="175" width="146" height="24" rx="6"/><text x="267" y="191">Inactive</text></g>
+              <rect class="region-overlay phase region-inactive" x="194" y="175" width="146" height="24" rx="6"/>
+              <g class="region-node" data-region="NBA"><rect x="194" y="234" width="146" height="24" rx="6"/><text x="267" y="250">NBA</text></g>
+              <rect class="region-overlay phase region-nba" x="194" y="234" width="146" height="24" rx="6"/>
+              <g class="region-node" data-region="Observed"><rect x="194" y="293" width="146" height="24" rx="6"/><text x="267" y="309">Observed</text></g>
+              <rect class="region-overlay phase region-observed" x="194" y="293" width="146" height="24" rx="6"/>
+              <g class="region-node" data-region="Reactive"><rect x="194" y="352" width="146" height="24" rx="6"/><text x="267" y="368">Reactive</text></g>
+              <rect class="region-overlay phase region-reactive" x="194" y="352" width="146" height="24" rx="6"/>
+              <g class="region-node" data-region="Postponed"><rect x="194" y="411" width="146" height="24" rx="6"/><text x="267" y="427">Postponed</text></g>
+              <rect class="region-overlay phase region-postponed" x="194" y="411" width="146" height="24" rx="6"/>
+              <g class="omitted-regions" data-omitted="Pre-Active"><title>Omitted: Pre-Active</title><rect x="252" y="100" width="30" height="19"/><text x="267" y="113">···</text></g>
+              <g class="omitted-regions" data-omitted="Pre-NBA"><title>Omitted: Pre-NBA</title><rect x="252" y="206" width="30" height="19"/><text x="267" y="219">···</text></g>
+              <g class="omitted-regions" data-omitted="Post-NBA, Pre-Observed"><title>Omitted: Post-NBA, Pre-Observed</title><rect x="252" y="265" width="30" height="19"/><text x="267" y="278">···</text></g>
+              <g class="omitted-regions" data-omitted="Post-Observed"><title>Omitted: Post-Observed</title><rect x="252" y="324" width="30" height="19"/><text x="267" y="337">···</text></g>
+              <g class="omitted-regions" data-omitted="Re-Inactive, Pre-Re-NBA, Re-NBA, Post-Re-NBA, Pre-Postponed"><title>Omitted: Re-Inactive, Pre-Re-NBA, Re-NBA, Post-Re-NBA, Pre-Postponed</title><rect x="252" y="383" width="30" height="19"/><text x="267" y="396">···</text></g>
+              <!-- Draw the complete return stems above the omission masks so
+                   their downward arrowheads stay visible without a highlight. -->
+              <g class="flow-connectors return-connectors" marker-end="url(#arrow-muted)">
+                <path d="M160 246V117h107v8"/>
+                <path d="M160 393v-49h107v8"/>
+                <path d="M365 393V117h-98v8"/>
+              </g>
+              <text class="current-event phase sample-rise-0 preponed-text" x="400" y="86">sample 0, 1</text>
+              <text class="current-event phase sample-rise-1 preponed-text" x="400" y="86">sample 1, 0</text>
+              <text class="current-event phase sample-rise-2 preponed-text" x="400" y="86">sample 2, 1</text>
+              <text class="current-event phase sample-rise-3 preponed-text" x="400" y="86">sample 3, 0</text>
+              <text class="current-event phase sample-fall-0 preponed-text" x="400" y="86">sample 1, 0</text>
+              <text class="current-event phase sample-fall-1 preponed-text" x="400" y="86">sample 2, 1</text>
+              <text class="current-event phase sample-fall-2 preponed-text" x="400" y="86">sample 3, 0</text>
+              <text class="current-event phase sample-fall-3 preponed-text" x="400" y="86">sample 4, 1</text>
+              <text class="current-event phase phase-rise active-text" x="400" y="141">clk = 1</text>
+              <text class="current-event phase enqueue-0 active-text" x="400" y="141">0 + 1 → 1</text>
+              <text class="current-event phase enqueue-1 active-text" x="400" y="141">1 + 1 → 2</text>
+              <text class="current-event phase enqueue-2 active-text" x="400" y="141">2 + 1 → 3</text>
+              <text class="current-event phase enqueue-3 active-text" x="400" y="141">3 + 1 → 4</text>
+              <text class="current-event phase phase-suspend active-text" x="400" y="141">#0 suspend</text>
+              <text class="current-event phase phase-inactive inactive-text" x="400" y="191">#0 continuation</text>
+              <text class="current-event phase phase-resume active-text" x="400" y="141">seen = 1</text>
+              <text class="current-event phase phase-strobe active-text" x="400" y="141">queue $strobe</text>
+              <text class="current-event phase pending-0 nba-text" x="400" y="250">count &lt;= 1</text>
+              <text class="current-event phase pending-1 nba-text" x="400" y="250">count &lt;= 2</text>
+              <text class="current-event phase pending-2 nba-text" x="400" y="250">count &lt;= 3</text>
+              <text class="current-event phase pending-3 nba-text" x="400" y="250">count &lt;= 4</text>
+              <text class="current-event phase commit-0 nba-text" x="400" y="250">count 0 → 1</text>
+              <text class="current-event phase commit-1 nba-text" x="400" y="250">count 1 → 2</text>
+              <text class="current-event phase commit-2 nba-text" x="400" y="250">count 2 → 3</text>
+              <text class="current-event phase commit-3 nba-text" x="400" y="250">count 3 → 4</text>
+              <text class="current-event phase comb-0 active-text" x="400" y="141">even = 0</text>
+              <text class="current-event phase comb-1 active-text" x="400" y="141">even = 1</text>
+              <text class="current-event phase comb-2 active-text" x="400" y="141">even = 0</text>
+              <text class="current-event phase comb-3 active-text" x="400" y="141">even = 1</text>
+              <text class="current-event phase observe-0 observed-text" x="400" y="309">sampled 1 == ~0</text>
+              <text class="current-event phase observe-1 observed-text" x="400" y="309">sampled 0 == ~1</text>
+              <text class="current-event phase observe-2 observed-text" x="400" y="309">sampled 1 == ~0</text>
+              <text class="current-event phase observe-3 observed-text" x="400" y="309">sampled 0 == ~1</text>
+              <text class="current-event phase phase-react reactive-text" x="400" y="368">$display(&quot;ok&quot;)</text>
+              <text class="current-event phase postpone-0 postponed-text" x="400" y="427">&quot;count=1&quot;</text>
+              <text class="current-event phase postpone-1 postponed-text" x="400" y="427">&quot;count=2&quot;</text>
+              <text class="current-event phase postpone-2 postponed-text" x="400" y="427">&quot;count=3&quot;</text>
+              <text class="current-event phase postpone-3 postponed-text" x="400" y="427">&quot;count=4&quot;</text>
+              <text class="current-event phase phase-fall active-text" x="400" y="141">clk = 0</text>
+              <path class="feedback-path phase inactive-feedback" d="M194 187h-34V117h107v8" marker-end="url(#arrow-inactive)"/>
+              <path class="feedback-path phase nba-feedback" d="M194 246h-34V117h107v8" marker-end="url(#arrow-nba)"/>
+              <circle class="time-packet incoming-packet loop" cx="25" cy="82" r="3"/>
+              <circle class="time-packet outgoing-packet loop" cx="340" cy="423" r="3"/>
+              <circle class="nba-packet loop" cx="194" cy="246" r="3"/>
+              <path class="register-rule" d="M24 463h512"/>
+              <g class="registers">
+                <text class="svg-label" x="24" y="488">SIGNALS</text>
+                <text class="register-label" x="123" y="488">clk</text>
+                <text class="phase clock-low register-value" x="159" y="488">0</text>
+                <text class="phase clock-high register-value" x="159" y="488">1</text>
+                <text class="register-label" x="210" y="488">count</text>
+                <text class="phase count-0 register-value nba-text" x="264" y="488">4'h0</text>
+                <text class="phase count-1 register-value nba-text" x="264" y="488">4'h1</text>
+                <text class="phase count-2 register-value nba-text" x="264" y="488">4'h2</text>
+                <text class="phase count-3 register-value nba-text" x="264" y="488">4'h3</text>
+                <text class="phase count-4 register-value nba-text" x="264" y="488">4'h4</text>
+                <text class="register-label" x="353" y="488">seen</text>
+                <text class="phase seen-zero register-value" x="399" y="488">0</text>
+                <text class="phase seen-one register-value inactive-text" x="399" y="488">1</text>
+                <text class="register-label" x="451" y="488">even</text>
+                <text class="phase even-one register-value" x="497" y="488">1</text>
+                <text class="phase even-zero register-value" x="497" y="488">0</text>
+              </g>
+            </svg>
+          </section>
+        </div>
+        <figcaption class="simulation-caption" id="simulation-caption">
+          <span class="sr-only">Four clock cycles from 0 to 40 ns through Preponed, Active, Inactive, NBA, Observed, Reactive, and Postponed, followed by a time-slot transition. PLI callbacks and unused reactive regions are collapsed.</span>
+          <label class="motion-toggle" for="motion-toggle">
+            <span class="pause-label"><svg width="11" height="12" viewBox="0 0 11 12" aria-hidden="true"><path d="M3 2v8m5-8v8" stroke="currentColor" stroke-width="2"/></svg>Pause animation</span>
+            <span class="play-label"><svg width="11" height="12" viewBox="0 0 11 12" aria-hidden="true"><path d="m3 1 7 5-7 5Z" fill="currentColor"/></svg>Play animation</span>
+          </label>
+          <span class="trace-progress loop" aria-hidden="true"></span>
+        </figcaption>
+      </figure>
+    </main>
+
+    <footer class="site-footer">
+      <nav class="destination-links" aria-label="Get started">
+        <a class="button button-primary" href="https://playground.talos-sv.org/"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3 3 5 5-5 5m6 0h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Playground<span class="button-arrow" aria-hidden="true">↗</span></a>
+        <a class="button button-secondary" href="https://docs.talos-sv.org/"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3C6.5 1.5 3.5 1.5 1.5 2.5v10C3.5 11.5 6.5 11.5 8 13m0-10c1.5-1.5 4.5-1.5 6.5-.5v10C12.5 11.5 9.5 11.5 8 13Zm0 0v10" stroke="currentColor" stroke-linejoin="round"/></svg>Docs<span class="button-arrow" aria-hidden="true">↗</span></a>
+        <a class="button button-secondary github-link" href="https://github.com/Kuree/talos" target="_blank" rel="noopener noreferrer" aria-label="Talos source on GitHub"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.17 1.73 1.17 1 1.72 2.64 1.22 3.28.93.1-.73.39-1.22.72-1.5-2.5-.29-5.13-1.25-5.13-5.57 0-1.23.44-2.24 1.16-3.02-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15A10.8 10.8 0 0 1 12 6.16c.96 0 1.93.13 2.83.38 2.15-1.46 3.1-1.15 3.1-1.15.61 1.55.23 2.7.11 2.98.72.78 1.16 1.79 1.16 3.02 0 4.33-2.63 5.28-5.14 5.56.4.35.76 1.03.76 2.08v3.1c0 .3.2.65.77.54A11.25 11.25 0 0 0 12 .75Z"/></svg>GitHub<span class="button-arrow" aria-hidden="true">↗</span></a>
+      </nav>
+    </footer>
+  </div>
+</body>
+</html>

@@ -15,6 +15,7 @@
     }
   ],
   "routes": [
+    { "pattern": "talos-sv.org", "custom_domain": true },
     { "pattern": "docs.talos-sv.org", "custom_domain": true },
     { "pattern": "playground.talos-sv.org", "custom_domain": true }
   ]

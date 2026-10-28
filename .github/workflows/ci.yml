@@ -441,7 +441,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: cloudflare
-      url: https://playground.talos-sv.org
+      url: https://talos-sv.org
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       # Retries never overwrite the objects used by an active deployment.
@@ -504,6 +504,12 @@ jobs:
       - name: Check public sites
         run: |
           curl --fail --retry 8 --retry-delay 5 --retry-all-errors \
+            --dump-header "$RUNNER_TEMP/talos-landing-headers" \
+            --head https://talos-sv.org/
+          curl --fail --retry 8 --retry-delay 5 --retry-all-errors \
+            --dump-header "$RUNNER_TEMP/talos-landing-css-headers" \
+            --head https://talos-sv.org/landing.css
+          curl --fail --retry 8 --retry-delay 5 --retry-all-errors \
             --dump-header "$RUNNER_TEMP/talos-docs-headers" \
             --head https://docs.talos-sv.org/
           curl --fail --retry 8 --retry-delay 5 --retry-all-errors \
@@ -512,10 +518,11 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
-          for name, content_type in (("docs", "text/html"), ("wasm", "application/wasm")):
+          for name, content_type in (("landing", "text/html"), ("landing-css", "text/css"),
+                                     ("docs", "text/html"), ("wasm", "application/wasm")):
               path = Path(os.environ["RUNNER_TEMP"]) / f"talos-{name}-headers"
               headers = dict(line.lower().split(":", 1) for line in path.read_text().splitlines() if ":" in line)
               assert headers["x-talos-release"].strip() == os.environ["SITE_RELEASE"]
               assert headers["content-type"].strip().startswith(content_type)
-          print("Both public sites serve the expected release and MIME types")
+          print("Landing page, documentation, and playground serve the expected release and MIME types")
           PY

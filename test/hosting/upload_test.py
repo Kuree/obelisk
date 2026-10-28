@@ -40,6 +40,14 @@ class UploadTest(unittest.TestCase):
         self.assertEqual(by_name["talos.wasm"].sha256, upload.hashlib.sha256(b"\0asm").hexdigest())
         self.assertTrue(all(asset.key.startswith("releases/release-123/") for asset in assets))
 
+    def test_landing_assets_are_uploaded_with_the_playground(self):
+        for name, content in (("landing.html", "<html>Landing</html>"),
+                              ("landing.css", "body {}")):
+            (self.playground / name).write_text(content)
+        assets = {asset.source.name: asset for asset in self.collect()}
+        self.assertEqual(assets["landing.html"].key, "releases/release-123/playground/landing.html")
+        self.assertEqual(assets["landing.css"].content_type, "text/css; charset=utf-8")
+
     def test_rejects_symlinks_and_bad_release_names(self):
         for release in ("../other", "/absolute", "", "unpublished", "a/b"):
             with self.subTest(release=release), self.assertRaises(ValueError):
